@@ -1,0 +1,8 @@
+/target/
+/bin/
+/.settings
+/.project
+/.idea
+/.junie
+/.claude
+.classpath
