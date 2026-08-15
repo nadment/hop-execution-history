@@ -22,7 +22,9 @@ image:https://sonarcloud.io/api/project_badges/measure?project=hop-execution-his
 
 == Overview
 
-Apache Hop plugin dealing with the history of pipeline and workflow executions.
+An Apache Hop plugin that displays the execution history of pipelines and workflows. It adds
+a chart to the pipeline and workflow editors showing past runs with their status and duration,
+making it easy to spot trends, regressions, and failures over time.
 
 image::doc/images/hop-execution-history.png[]
 
