@@ -46,11 +46,6 @@ public class ExecutionHistoryChart extends Canvas {
 
   private static final Class<?> PKG = ExecutionHistoryChart.class;
 
-  // TODO: use Local or Const.HOP_DEFAULT_DATE_FORMAT to format date time
-  /** Formats absolute dates shown in tooltips. */
-  private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
-
-
   private static final String CONST_STOPPED = "Stopped";
 
   /**
@@ -563,7 +558,13 @@ public class ExecutionHistoryChart extends Canvas {
   }
 
   private static String formatDate(@Nullable Date date) {
-    return date == null ? "?" : DATE_FORMAT.format(date);
+    if ( date == null) {
+      return "?";
+    }
+
+    // TODO: use Local or Const.HOP_DEFAULT_DATE_FORMAT to format date time
+    SimpleDateFormat formatter = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
+    return formatter.format(date);
   }
 
   /**
