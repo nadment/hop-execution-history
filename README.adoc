@@ -26,7 +26,16 @@ An Apache Hop plugin that displays the execution history of pipelines and workfl
 a chart to the pipeline and workflow editors showing past runs with their status and duration,
 making it easy to spot trends, regressions, and failures over time.
 
+== Main features
+
+* Quick visual analysis: Instantly spot the failures
+* Quick actions: a double-click opens the execution details.
+
 image::doc/images/hop-execution-history.png[]
+
+Each vertical column represents a specific execution of a workflow or pipeline. The bars at the top of the column indicate the overall duration and status of that execution (for example, green for success, red for failure).
+
+Each horizontal line corresponds to an individual action or transformation. The icons at the intersection of a line and a column illustrate the status of that specific component.
 
 == Requirements
 
