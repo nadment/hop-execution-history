@@ -22,7 +22,6 @@ import static org.apache.hop.ui.execution.history.ExecutionHistoryChart.formatDu
 import static org.apache.hop.ui.execution.history.ExecutionHistoryChart.getChronoUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
