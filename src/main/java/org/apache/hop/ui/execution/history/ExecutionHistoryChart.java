@@ -50,6 +50,9 @@ public class ExecutionHistoryChart extends Canvas {
   /** Formats absolute dates shown in tooltips. */
   private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
 
+
+  private static final String CONST_STOPPED = "Stopped";
+
   /**
    * Height in pixels, from the top of the canvas down to the duration-axis baseline (y = 0
    * duration). The bar chart's usable height is {@code CHART_HEIGHT - TOP_MARGIN_HEIGHT}.
@@ -492,7 +495,7 @@ public class ExecutionHistoryChart extends Canvas {
     GuiResource resource = GuiResource.getInstance();
     if (state != null) {
       if (state.isFailed()) {
-        if ("Stopped".equals(state.getStatusDescription())) {
+        if (CONST_STOPPED.equals(state.getStatusDescription())) {
           return resource.getColorGray();
         }
         return resource.getColorRed();
@@ -510,7 +513,7 @@ public class ExecutionHistoryChart extends Canvas {
   private @Nullable String getExecutionStateName(@Nullable ExecutionState state) {
     if (state != null) {
       if (state.isFailed()) {
-        if ("Stopped".equals(state.getStatusDescription())) {
+        if (CONST_STOPPED.equals(state.getStatusDescription())) {
           return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Stopped");
         }
 
@@ -534,7 +537,7 @@ public class ExecutionHistoryChart extends Canvas {
     }
     GuiResource resource = GuiResource.getInstance();
     if (state.isFailed()) {
-      if ("Stopped".equals(state.getStatusDescription())) {
+      if (CONST_STOPPED.equals(state.getStatusDescription())) {
         return resource.getImageErrorDisabled();
       }
       return resource.getImageFailure();
