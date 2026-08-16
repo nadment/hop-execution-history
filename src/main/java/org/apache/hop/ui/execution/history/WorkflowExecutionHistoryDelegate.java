@@ -62,198 +62,196 @@ import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Shell;
 
 @GuiPlugin(
-        name = "Workflow execution history",
-        description = "Show the history of recent workflow executions")
+    name = "Workflow execution history",
+    description = "Show the history of recent workflow executions")
 public class WorkflowExecutionHistoryDelegate {
 
-    public static final Class<?> PKG = WorkflowExecutionHistoryDelegate.class; // i18n
+  public static final Class<?> PKG = WorkflowExecutionHistoryDelegate.class; // i18n
 
-    public static final String GUI_PLUGIN_TOOLBAR_PARENT_ID = "WorkflowExecutionHistory-Toolbar";
-    public static final String TOOLBAR_ITEM_REFRESH =
-            "WorkflowExecutionHistory-Toolbar-10100-Refresh";
+  public static final String GUI_PLUGIN_TOOLBAR_PARENT_ID = "WorkflowExecutionHistory-Toolbar";
+  public static final String TOOLBAR_ITEM_REFRESH =
+      "WorkflowExecutionHistory-Toolbar-10100-Refresh";
 
-    private final HopGui hopGui;
-    private final HopGuiWorkflowGraph workflowGraph;
-    private GuiToolbarWidgets toolBarWidgets;
-    private ExecutionHistoryChart wChart;
+  private final HopGui hopGui;
+  private final HopGuiWorkflowGraph workflowGraph;
+  private GuiToolbarWidgets toolBarWidgets;
+  private ExecutionHistoryChart wChart;
 
-    public WorkflowExecutionHistoryDelegate(HopGui hopGui, HopGuiWorkflowGraph workflowGraph) {
-        super();
-        this.hopGui = hopGui;
-        this.workflowGraph = workflowGraph;
+  public WorkflowExecutionHistoryDelegate(HopGui hopGui, HopGuiWorkflowGraph workflowGraph) {
+    super();
+    this.hopGui = hopGui;
+    this.workflowGraph = workflowGraph;
+  }
+
+  @GuiTab(
+      id = "90000-workflow-execution-history-tab",
+      parentId = HopGuiWorkflowGraph.WORKFLOW_GRAPH_TABS,
+      description = "Workflow execution history")
+  public CTabItem addExecutionHistoryTab(CTabFolder tabFolder) {
+    CTabItem tab = new CTabItem(tabFolder, SWT.NONE);
+    tab.setFont(GuiResource.getInstance().getFontDefault());
+    // TODO:
+    // tab.setImage(GuiResource.getInstance().getImagePulse());
+    tab.setImage(
+        GuiResource.getInstance()
+            .getImage(
+                "pulse.svg",
+                PKG.getClassLoader(),
+                ConstUi.SMALL_ICON_SIZE,
+                ConstUi.SMALL_ICON_SIZE));
+    tab.setText(BaseMessages.getString(PKG, "ExecutionHistory.Tab.Name"));
+
+    Composite composite = new Composite(tabFolder, SWT.NONE);
+    tab.setControl(composite);
+    composite.setLayout(new FormLayout());
+
+    // Create toolbar
+    IToolbarContainer toolBarContainer =
+        ToolbarFacade.createToolbarContainer(composite, SWT.WRAP | SWT.LEFT | SWT.HORIZONTAL);
+    toolBarWidgets = new GuiToolbarWidgets();
+    toolBarWidgets.registerGuiPluginObject(this);
+    toolBarWidgets.createToolbarWidgets(toolBarContainer, GUI_PLUGIN_TOOLBAR_PARENT_ID);
+    Control toolBar = toolBarContainer.getControl();
+    toolBar.setLayoutData(new FormDataBuilder().fullWidth().top().result());
+    toolBar.pack();
+    PropsUi.setLook(toolBar, Props.WIDGET_STYLE_TOOLBAR);
+
+    // Create the chart
+    wChart = new ExecutionHistoryChart(composite, SWT.NONE);
+    wChart.setLayoutData(new FormDataBuilder().fullWidth().top(toolBar).bottom().result());
+
+    return tab;
+  }
+
+  /** Reload all execution information locations and rebuild the execution history. */
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_REFRESH,
+      toolTip = "i18n::ExecutionHistory.Button.Refresh.Tooltip",
+      image = "ui/images/refresh.svg")
+  @GuiKeyboardShortcut(key = SWT.F5)
+  @GuiOsxKeyboardShortcut(key = SWT.F5)
+  public void refresh() {
+    String workflowName = workflowGraph.getName();
+    if (workflowName == null) {
+      return;
     }
 
-    @GuiTab(
-            id = "90000-workflow-execution-history-tab",
-            parentId = HopGuiWorkflowGraph.WORKFLOW_GRAPH_TABS,
-            description = "Workflow execution history")
-    public CTabItem addExecutionHistoryTab(CTabFolder tabFolder) {
-        CTabItem tab = new CTabItem(tabFolder, SWT.NONE);
-        tab.setFont(GuiResource.getInstance().getFontDefault());
-        // TODO:
-        // tab.setImage(GuiResource.getInstance().getImagePulse());
-        tab.setImage(
-                GuiResource.getInstance()
-                        .getImage(
-                                "pulse.svg",
-                                PKG.getClassLoader(),
-                                ConstUi.SMALL_ICON_SIZE,
-                                ConstUi.SMALL_ICON_SIZE));
-        tab.setText(BaseMessages.getString(PKG, "ExecutionHistory.Tab.Name"));
+    Shell shell = hopGui.getShell();
 
-        Composite composite = new Composite(tabFolder, SWT.NONE);
-        tab.setControl(composite);
-        composite.setLayout(new FormLayout());
+    try {
+      shell.setCursor(shell.getDisplay().getSystemCursor(SWT.CURSOR_WAIT));
 
-        // Create toolbar
-        IToolbarContainer toolBarContainer =
-                ToolbarFacade.createToolbarContainer(composite, SWT.WRAP | SWT.LEFT | SWT.HORIZONTAL);
-        toolBarWidgets = new GuiToolbarWidgets();
-        toolBarWidgets.registerGuiPluginObject(this);
-        toolBarWidgets.createToolbarWidgets(toolBarContainer, GUI_PLUGIN_TOOLBAR_PARENT_ID);
-        Control toolBar = toolBarContainer.getControl();
-        toolBar.setLayoutData(new FormDataBuilder().fullWidth().top().result());
-        toolBar.pack();
-        PropsUi.setLook(toolBar, Props.WIDGET_STYLE_TOOLBAR);
+      IHopMetadataProvider metadataProvider = hopGui.getMetadataProvider();
+      IHopMetadataSerializer<ExecutionInfoLocation> serializer =
+          metadataProvider.getSerializer(ExecutionInfoLocation.class);
+      List<ExecutionInfoLocation> locations = serializer.loadAll();
 
-        // Create the chart
-        wChart = new ExecutionHistoryChart(composite, SWT.NONE);
-        wChart.setLayoutData(new FormDataBuilder().fullWidth().top(toolBar).bottom().result());
-
-        return tab;
-    }
-
-    /**
-     * Reload all execution information locations and rebuild the execution history.
-     */
-    @GuiToolbarElement(
-            root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
-            id = TOOLBAR_ITEM_REFRESH,
-            toolTip = "i18n::ExecutionHistory.Button.Refresh.Tooltip",
-            image = "ui/images/refresh.svg")
-    @GuiKeyboardShortcut(key = SWT.F5)
-    @GuiOsxKeyboardShortcut(key = SWT.F5)
-    public void refresh() {
-        String workflowName = workflowGraph.getName();
-        if (workflowName == null) {
-            return;
-        }
-
-        Shell shell = hopGui.getShell();
-
+      ExecutionHistory history = new ExecutionHistory(ExecutionType.Workflow, workflowName);
+      for (ExecutionInfoLocation locationMeta : locations) {
         try {
-            shell.setCursor(shell.getDisplay().getSystemCursor(SWT.CURSOR_WAIT));
+          IExecutionInfoLocation location = locationMeta.getExecutionInfoLocation();
+          location.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
 
-            IHopMetadataProvider metadataProvider = hopGui.getMetadataProvider();
-            IHopMetadataSerializer<ExecutionInfoLocation> serializer =
-                    metadataProvider.getSerializer(ExecutionInfoLocation.class);
-            List<ExecutionInfoLocation> locations = serializer.loadAll();
+          IExecutionSelector selector =
+              new DefaultExecutionSelector(
+                  false, false, false, false, true, false, workflowName, LastPeriod.NONE);
+          for (String id : location.findExecutionIDs(selector)) {
 
-            ExecutionHistory history = new ExecutionHistory(ExecutionType.Workflow, workflowName);
-            for (ExecutionInfoLocation locationMeta : locations) {
-                try {
-                    IExecutionInfoLocation location = locationMeta.getExecutionInfoLocation();
-                    location.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
-
-                    IExecutionSelector selector =
-                            new DefaultExecutionSelector(
-                                    false, false, false, false, true, false, workflowName, LastPeriod.NONE);
-                    for (String id : location.findExecutionIDs(selector)) {
-
-                        // Limit to last executions
-                        if (history.getRuns().size() >= ExecutionHistory.RUN_LIMIT) {
-                            break;
-                        }
-
-                        Execution execution = location.getExecution(id);
-                        if (execution != null && workflowName.equals(execution.getName())) {
-
-                            // Don't load execution logging since that can be a lot of data
-                            ExecutionState state = location.getExecutionState(execution.getId(), false);
-                            ExecutionRun run =
-                                    new ExecutionRun(execution, state, locationMeta.getName(), location);
-                            history.getRuns().add(run);
-                        }
-                    }
-                } catch (Exception ex) {
-                    LogChannel.UI.logError(
-                            "Unable to retrieve execution information from location " + locationMeta.getName(),
-                            ex);
-                }
+            // Limit to last executions
+            if (history.getRuns().size() >= ExecutionHistory.RUN_LIMIT) {
+              break;
             }
 
-            // Sort by registration date desc and truncate.
-            List<ExecutionRun> runs = history.getRuns();
-            runs.sort(
-                    Comparator.comparing(
-                                    (ExecutionRun run) ->
-                                            run.getRegistrationDate() == null ? new Date(0) : run.getRegistrationDate())
-                            .reversed());
+            Execution execution = location.getExecution(id);
+            if (execution != null && workflowName.equals(execution.getName())) {
 
-            loadActionState(history);
-
-            wChart.setExecutionHistory(history);
-        } catch (Exception e) {
-            LogChannel.UI.logError("Error refreshing workflow execution history", e);
-        } finally {
-            shell.setCursor(null);
-        }
-    }
-
-    public void loadActionState(ExecutionHistory history) throws HopException {
-        try {
-            for (ExecutionRun run : history.getRuns()) {
-
-                // List all action execution states
-                List<String> childIds = run.getLocation().findChildIds(ExecutionType.Workflow, run.getId());
-                for (String childId : childIds) {
-                    ExecutionData executionData = run.getLocation().getExecutionData(run.getId(), childId);
-
-                    // Action doesn't have state, return null (BUG ?)
-                    ExecutionState childState = run.getLocation().getExecutionState(childId, false);
-
-                    // Create execution state based on execution data
-                    ExecutionDataSetMeta dataSetMeta = executionData.getDataSetMeta();
-                    if (dataSetMeta != null) {
-                        String actionName = dataSetMeta.getName();
-
-                        history.addComponentIfAbsent(actionName);
-
-                        // Add this one under that name
-                        ExecutionState state = new ExecutionState();
-                        state.setId(childId);
-                        state.setParentId(run.getId());
-                        state.setName(actionName);
-                        state.setExecutionType(ExecutionType.Action);
-                        if (executionData.isFinished()) {
-                            state.setExecutionEndDate(executionData.getCollectionDate());
-                        }
-
-                        RowBuffer rowBuffer = executionData.getDataSets().get(ExecutionDataBuilder.KEY_RESULT);
-                        if (rowBuffer != null) {
-                            IRowMeta rowMeta = rowBuffer.getRowMeta();
-                            if (rowMeta != null) {
-                                for (Object[] row : rowBuffer.getBuffer()) {
-                                    try {
-                                        if (rowMeta.getString(row, 0).equals(ExecutionDataBuilder.RESULT_KEY_ERRORS)) {
-                                            long errors = Long.parseLong(rowMeta.getString(row, 1));
-                                            state.setFailed(errors > 0);
-                                        }
-                                        if (rowMeta.getString(row, 0).equals(ExecutionDataBuilder.RESULT_KEY_STOPPED)) {
-                                            // state.setFailed("true".equalsIgnoreCase(rowMeta.getString(row, 1)));
-                                        }
-                                    } catch (Exception e) {
-                                        LogChannel.UI.logError("Error getting action result information", e);
-                                    }
-                                }
-                            }
-                        }
-                        run.getComponentStates().put(actionName, state);
-                    }
-                }
+              // Don't load execution logging since that can be a lot of data
+              ExecutionState state = location.getExecutionState(execution.getId(), false);
+              ExecutionRun run =
+                  new ExecutionRun(execution, state, locationMeta.getName(), location);
+              history.getRuns().add(run);
             }
-        } catch (Exception e) {
-            throw new HopException("Error getting child executions", e);
+          }
+        } catch (Exception ex) {
+          LogChannel.UI.logError(
+              "Unable to retrieve execution information from location " + locationMeta.getName(),
+              ex);
         }
+      }
+
+      // Sort by registration date desc and truncate.
+      List<ExecutionRun> runs = history.getRuns();
+      runs.sort(
+          Comparator.comparing(
+                  (ExecutionRun run) ->
+                      run.getRegistrationDate() == null ? new Date(0) : run.getRegistrationDate())
+              .reversed());
+
+      loadActionState(history);
+
+      wChart.setExecutionHistory(history);
+    } catch (Exception e) {
+      LogChannel.UI.logError("Error refreshing workflow execution history", e);
+    } finally {
+      shell.setCursor(null);
     }
+  }
+
+  public void loadActionState(ExecutionHistory history) throws HopException {
+    try {
+      for (ExecutionRun run : history.getRuns()) {
+
+        // List all action execution states
+        List<String> childIds = run.getLocation().findChildIds(ExecutionType.Workflow, run.getId());
+        for (String childId : childIds) {
+          ExecutionData executionData = run.getLocation().getExecutionData(run.getId(), childId);
+
+          // Action doesn't have state, return null (BUG ?)
+          ExecutionState childState = run.getLocation().getExecutionState(childId, false);
+
+          // Create execution state based on execution data
+          ExecutionDataSetMeta dataSetMeta = executionData.getDataSetMeta();
+          if (dataSetMeta != null) {
+            String actionName = dataSetMeta.getName();
+
+            history.addComponentIfAbsent(actionName);
+
+            // Add this one under that name
+            ExecutionState state = new ExecutionState();
+            state.setId(childId);
+            state.setParentId(run.getId());
+            state.setName(actionName);
+            state.setExecutionType(ExecutionType.Action);
+            if (executionData.isFinished()) {
+              state.setExecutionEndDate(executionData.getCollectionDate());
+            }
+
+            RowBuffer rowBuffer = executionData.getDataSets().get(ExecutionDataBuilder.KEY_RESULT);
+            if (rowBuffer != null) {
+              IRowMeta rowMeta = rowBuffer.getRowMeta();
+              if (rowMeta != null) {
+                for (Object[] row : rowBuffer.getBuffer()) {
+                  try {
+                    if (rowMeta.getString(row, 0).equals(ExecutionDataBuilder.RESULT_KEY_ERRORS)) {
+                      long errors = Long.parseLong(rowMeta.getString(row, 1));
+                      state.setFailed(errors > 0);
+                    }
+                    if (rowMeta.getString(row, 0).equals(ExecutionDataBuilder.RESULT_KEY_STOPPED)) {
+                      // state.setFailed("true".equalsIgnoreCase(rowMeta.getString(row, 1)));
+                    }
+                  } catch (Exception e) {
+                    LogChannel.UI.logError("Error getting action result information", e);
+                  }
+                }
+              }
+            }
+            run.getComponentStates().put(actionName, state);
+          }
+        }
+      }
+    } catch (Exception e) {
+      throw new HopException("Error getting child executions", e);
+    }
+  }
 }

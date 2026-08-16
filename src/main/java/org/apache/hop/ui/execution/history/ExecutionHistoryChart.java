@@ -486,7 +486,7 @@ public class ExecutionHistoryChart extends Canvas {
     }
   }
 
-  private Color getExecutionStateColor(@Nullable ExecutionState state) {
+  protected Color getExecutionStateColor(@Nullable ExecutionState state) {
     GuiResource resource = GuiResource.getInstance();
     if (state != null) {
       if (state.isFailed()) {
@@ -505,7 +505,7 @@ public class ExecutionHistoryChart extends Canvas {
     return resource.getColorLightGray();
   }
 
-  private @Nullable String getExecutionStateName(@Nullable ExecutionState state) {
+  protected @Nullable String getExecutionStateName(@Nullable ExecutionState state) {
     if (state != null) {
       if (state.isFailed()) {
         if (CONST_STOPPED.equals(state.getStatusDescription())) {
@@ -526,7 +526,7 @@ public class ExecutionHistoryChart extends Canvas {
     return null;
   }
 
-  public static @Nullable Image getExecutionStateImage(@Nullable ExecutionState state) {
+  protected static @Nullable Image getExecutionStateImage(@Nullable ExecutionState state) {
     if (state == null) {
       return null;
     }
@@ -546,7 +546,7 @@ public class ExecutionHistoryChart extends Canvas {
     return null;
   }
 
-  private static ChronoUnit getChronoUnit(long second) {
+  protected static ChronoUnit getChronoUnit(long second) {
     if (second >= 86400) {
       return ChronoUnit.DAYS;
     } else if (second >= 3600) {
@@ -557,8 +557,8 @@ public class ExecutionHistoryChart extends Canvas {
     return ChronoUnit.SECONDS;
   }
 
-  private static String formatDate(@Nullable Date date) {
-    if ( date == null) {
+  protected static String formatDate(@Nullable Date date) {
+    if (date == null) {
       return "?";
     }
 
@@ -578,7 +578,7 @@ public class ExecutionHistoryChart extends Canvas {
    * @param unit the chronological unit to use as the primary unit for formatting
    * @return a formatted duration string with appropriate suffixes
    */
-  private static String formatDuration(long duration, ChronoUnit unit) {
+  protected static String formatDuration(long duration, ChronoUnit unit) {
     return switch (unit) {
       case DAYS -> {
         long days = duration / 86400;
