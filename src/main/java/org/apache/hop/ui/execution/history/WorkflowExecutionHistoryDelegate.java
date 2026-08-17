@@ -19,7 +19,9 @@ package org.apache.hop.ui.execution.history;
 
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.apache.hop.core.Props;
 import org.apache.hop.core.exception.HopException;
 import org.apache.hop.core.gui.plugin.GuiPlugin;
@@ -74,6 +76,7 @@ public class WorkflowExecutionHistoryDelegate {
 
   private final HopGui hopGui;
   private final HopGuiWorkflowGraph workflowGraph;
+  private final Map<String, IExecutionInfoLocation> locationMap;
   private GuiToolbarWidgets toolBarWidgets;
   private ExecutionHistoryChart wChart;
 
@@ -81,6 +84,7 @@ public class WorkflowExecutionHistoryDelegate {
     super();
     this.hopGui = hopGui;
     this.workflowGraph = workflowGraph;
+    this.locationMap = new HashMap<>();
   }
 
   @GuiTab(
@@ -142,6 +146,12 @@ public class WorkflowExecutionHistoryDelegate {
     try {
       shell.setCursor(shell.getDisplay().getSystemCursor(SWT.CURSOR_WAIT));
 
+      // If there are any cached locations we want to close them before initializing new ones
+      for (IExecutionInfoLocation location : locationMap.values()) {
+        location.close();
+      }
+      locationMap.clear();
+
       IHopMetadataProvider metadataProvider = hopGui.getMetadataProvider();
       IHopMetadataSerializer<ExecutionInfoLocation> serializer =
           metadataProvider.getSerializer(ExecutionInfoLocation.class);
@@ -152,6 +162,9 @@ public class WorkflowExecutionHistoryDelegate {
         try {
           IExecutionInfoLocation location = locationMeta.getExecutionInfoLocation();
           location.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
+
+          // Keep the location around to close at the next refresh.
+          locationMap.put(locationMeta.getName(), location);
 
           IExecutionSelector selector =
               new DefaultExecutionSelector(
@@ -225,6 +238,8 @@ public class WorkflowExecutionHistoryDelegate {
             state.setExecutionType(ExecutionType.Action);
             if (executionData.isFinished()) {
               state.setExecutionEndDate(executionData.getCollectionDate());
+            } else {
+              state.setStatusDescription("running");
             }
 
             RowBuffer rowBuffer = executionData.getDataSets().get(ExecutionDataBuilder.KEY_RESULT);
@@ -246,6 +261,7 @@ public class WorkflowExecutionHistoryDelegate {
                 }
               }
             }
+
             run.getComponentStates().put(actionName, state);
           }
         }

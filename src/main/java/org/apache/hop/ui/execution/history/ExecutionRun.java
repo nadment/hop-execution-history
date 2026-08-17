@@ -66,7 +66,7 @@ public class ExecutionRun {
 
     // If running execution, use current time to compute duration
     Instant end =
-        (state.getExecutionEndDate() != null)
+        (state != null && state.getExecutionEndDate() != null)
             ? state.getExecutionEndDate().toInstant()
             : Instant.now();
 

@@ -19,7 +19,9 @@ package org.apache.hop.ui.execution.history;
 
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.apache.hop.core.Props;
 import org.apache.hop.core.exception.HopException;
 import org.apache.hop.core.gui.plugin.GuiPlugin;
@@ -69,6 +71,7 @@ public class PipelineExecutionHistoryDelegate {
 
   private final HopGui hopGui;
   private final HopGuiPipelineGraph pipelineGraph;
+  private final Map<String, IExecutionInfoLocation> locationMap;
   private GuiToolbarWidgets toolBarWidgets;
   private ExecutionHistoryChart wChart;
 
@@ -76,6 +79,7 @@ public class PipelineExecutionHistoryDelegate {
     super();
     this.hopGui = hopGui;
     this.pipelineGraph = pipelineGraph;
+    this.locationMap = new HashMap<>();
   }
 
   @GuiTab(
@@ -136,6 +140,12 @@ public class PipelineExecutionHistoryDelegate {
     try {
       shell.setCursor(shell.getDisplay().getSystemCursor(SWT.CURSOR_WAIT));
 
+      // If there are any cached locations we want to close them before initializing new ones
+      for (IExecutionInfoLocation location : locationMap.values()) {
+        location.close();
+      }
+      locationMap.clear();
+
       IHopMetadataProvider metadataProvider = hopGui.getMetadataProvider();
       IHopMetadataSerializer<ExecutionInfoLocation> serializer =
           metadataProvider.getSerializer(ExecutionInfoLocation.class);
@@ -146,6 +156,9 @@ public class PipelineExecutionHistoryDelegate {
         try {
           IExecutionInfoLocation location = locationMeta.getExecutionInfoLocation();
           location.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
+
+          // Keep the location around to close at the next refresh.
+          locationMap.put(locationMeta.getName(), location);
 
           IExecutionSelector selector =
               new DefaultExecutionSelector(

@@ -495,11 +495,11 @@ public class ExecutionHistoryChart extends Canvas {
         }
         return resource.getColorRed();
       }
-      if (state.isRunning()) {
-        return runningColor;
-      }
       if (state.isFinished()) {
         return finishedColor;
+      }
+      if (state.isRunning()) {
+        return runningColor;
       }
     }
     return resource.getColorLightGray();
@@ -514,11 +514,11 @@ public class ExecutionHistoryChart extends Canvas {
 
         return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Failed");
       }
-      if (state.isRunning()) {
-        return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Running");
-      }
       if (state.isFinished()) {
         return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Completed");
+      }
+      if (state.isRunning()) {
+        return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Running");
       }
 
       return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Unknown");
@@ -537,11 +537,11 @@ public class ExecutionHistoryChart extends Canvas {
       }
       return resource.getImageFailure();
     }
-    if (state.isRunning()) {
-      return resource.getImageBusy();
-    }
     if (state.isFinished()) {
       return resource.getImageSuccess();
+    }
+    if (state.isRunning()) {
+      return resource.getImageBusy();
     }
     return null;
   }
