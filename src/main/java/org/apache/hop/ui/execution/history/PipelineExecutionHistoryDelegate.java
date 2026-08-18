@@ -162,7 +162,7 @@ public class PipelineExecutionHistoryDelegate {
 
           IExecutionSelector selector =
               new DefaultExecutionSelector(
-                  false, false, false, false, false, true, null, LastPeriod.NONE);
+                  false, false, false, false, false, true, pipelineName, LastPeriod.NONE);
           for (String id : location.findExecutionIDs(selector)) {
 
             // Limit to last executions
@@ -172,7 +172,6 @@ public class PipelineExecutionHistoryDelegate {
 
             Execution execution = location.getExecution(id);
             if (execution != null && pipelineName.equals(execution.getName())) {
-
               // Don't load execution logging since that can be a lot of data
               ExecutionState state = location.getExecutionState(id, false);
               ExecutionRun run =

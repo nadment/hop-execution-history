@@ -37,6 +37,8 @@ import org.eclipse.swt.graphics.Rectangle;
 import org.eclipse.swt.widgets.Canvas;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Event;
+import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.ScrollBar;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
@@ -132,6 +134,7 @@ public class ExecutionHistoryChart extends Canvas {
     addListener(SWT.MouseExit, this::mouseExit);
     addListener(SWT.MouseDoubleClick, this::mouseDoubleClick);
     addListener(SWT.Resize, e -> updateVerticalScrollBar());
+    addListener(SWT.MenuDetect, this::menuDetect);
 
     ScrollBar verticalBar = getVerticalBar();
     if (verticalBar != null) {
@@ -379,6 +382,17 @@ public class ExecutionHistoryChart extends Canvas {
     verticalBar.setSelection(scrollOffset);
   }
 
+  private void menuDetect(Event event) {
+    ExecutionRun run = getSelectedExecutionRun();
+    if (run != null) {
+      Menu menu = new Menu(this);
+      MenuItem openItem = new MenuItem(menu, SWT.PUSH);
+      openItem.setText(BaseMessages.getString(PKG, "ExecutionHistoryChart.Menu.OpenExecution"));
+      openItem.addListener(SWT.Selection, e -> openExecution(run));
+      menu.setVisible(true);
+    }
+  }
+
   private void mouseMove(Event event) {
     int previousSelectedExecution = selectedExecution;
     int previousSelectedAction = selectedComponent;
@@ -426,13 +440,12 @@ public class ExecutionHistoryChart extends Canvas {
     // Reset tooltip
     setToolTipText(null);
 
-    ExecutionHistory history = this.executionHistory;
-    if (history == null || selectedExecution < 0) {
+    if (executionHistory == null || selectedExecution < 0) {
       return;
     }
 
     // Set the tooltip
-    ExecutionRun run = history.getRun(selectedExecution);
+    ExecutionRun run = executionHistory.getRun(selectedExecution);
     // Mouse hover execution bars
     if (selectedComponent < 0) {
       setToolTipText(
@@ -450,7 +463,7 @@ public class ExecutionHistoryChart extends Canvas {
     }
     // Mouse hover action execution state
     else {
-      String name = history.getComponentNames().get(selectedComponent);
+      String name = executionHistory.getComponentNames().get(selectedComponent);
       ExecutionState executionState = run.getComponentStates().get(name);
       setToolTipText(getExecutionStateName(executionState));
     }
@@ -464,15 +477,25 @@ public class ExecutionHistoryChart extends Canvas {
   }
 
   private void mouseDoubleClick(Event event) {
-    ExecutionHistory history = this.executionHistory;
-    if (history == null || selectedExecution < 0) {
+    openExecution(getSelectedExecutionRun());
+  }
+
+  public @Nullable ExecutionRun getSelectedExecutionRun() {
+    if (executionHistory != null && selectedExecution >= 0) {
+      return executionHistory.getRun(selectedExecution);
+    }
+    return null;
+  }
+
+  private void openExecution(@Nullable ExecutionRun run) {
+    if (run == null) {
       return;
     }
 
     try {
-      ExecutionRun run = history.getRun(selectedExecution);
-      String locationName = run.getLocationName();
       ExecutionPerspective perspective = ExecutionPerspective.getInstance();
+
+      String locationName = run.getLocationName();
 
       // Active the perspective before to avoid NPE when never used before and getLocationMap is
       // empty.
