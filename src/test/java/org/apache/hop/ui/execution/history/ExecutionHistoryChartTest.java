@@ -22,7 +22,10 @@ import static org.apache.hop.ui.execution.history.ExecutionHistoryChart.formatDu
 import static org.apache.hop.ui.execution.history.ExecutionHistoryChart.getChronoUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import org.junit.jupiter.api.Test;
@@ -87,7 +90,9 @@ class ExecutionHistoryChartTest {
   @Test
   void formatDateUsesFixedPattern() {
     Date date = new Date(0L);
-    String expected = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss").format(date);
+    String expected =
+        DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
+            .format(LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault()));
     assertEquals(expected, formatDate(date));
   }
 }

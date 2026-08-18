@@ -17,7 +17,10 @@
 
 package org.apache.hop.ui.execution.history;
 
-import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.List;
@@ -47,6 +50,13 @@ import org.jspecify.annotations.Nullable;
 public class ExecutionHistoryChart extends Canvas {
 
   private static final Class<?> PKG = ExecutionHistoryChart.class;
+
+  /**
+   * This formatter produces locale-specific date-time strings with
+   * medium-length formatting for both date and time components.
+   */
+  private static final DateTimeFormatter DATETIME_FORMATTER =
+      DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM);
 
   private static final String CONST_STOPPED = "Stopped";
 
@@ -585,9 +595,8 @@ public class ExecutionHistoryChart extends Canvas {
       return "?";
     }
 
-    // TODO: use Local or Const.HOP_DEFAULT_DATE_FORMAT to format date time
-    SimpleDateFormat formatter = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
-    return formatter.format(date);
+    return DATETIME_FORMATTER.format(
+        LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault()));
   }
 
   /**
