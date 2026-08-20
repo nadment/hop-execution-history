@@ -30,15 +30,16 @@ import org.apache.hop.execution.IExecutionInfoLocation;
 
 @Getter
 public class ExecutionRun {
-  private final ExecutionState executionState;
 
   private final String id;
   private final String parentId;
   private final String name;
   private final String runConfigurationName;
-  private final Date registrationDate;
-  private final Date executionStartDate;
   private final ExecutionType executionType;
+  private final ExecutionStatus executionStatus;
+  private final ExecutionState executionState;
+  private final Date executionStartDate;
+  private final Date registrationDate;
 
   /** Duration in seconds */
   private final long duration;
@@ -47,10 +48,11 @@ public class ExecutionRun {
   private final String locationName;
 
   private final IExecutionInfoLocation location;
-  private final Map<String, ExecutionState> componentStates;
+  private final Map<String, ExecutionStatus> componentStatus;
 
   public ExecutionRun(
       Execution execution,
+      ExecutionStatus status,
       ExecutionState state,
       String locationName,
       IExecutionInfoLocation location) {
@@ -62,17 +64,28 @@ public class ExecutionRun {
     this.registrationDate = execution.getRegistrationDate();
     this.executionType = execution.getExecutionType();
     this.executionStartDate = execution.getExecutionStartDate();
+    this.executionStatus = status;
     this.executionState = state;
-
-    // If running execution, use current time to compute duration
-    Instant end =
-        (state != null && state.getExecutionEndDate() != null)
-            ? state.getExecutionEndDate().toInstant()
-            : Instant.now();
-
-    this.duration = ChronoUnit.SECONDS.between(execution.getExecutionStartDate().toInstant(), end);
     this.locationName = locationName;
     this.location = location;
-    this.componentStates = new LinkedHashMap<>();
+
+    this.duration =
+        switch (status) {
+          case FINISHED, FAILED, STOPPED ->
+              ChronoUnit.SECONDS.between(
+                  execution.getExecutionStartDate().toInstant(),
+                  state.getExecutionEndDate().toInstant());
+            // If running execution, use current time to compute duration
+          case RUNNING ->
+              ChronoUnit.SECONDS.between(
+                  execution.getExecutionStartDate().toInstant(), Instant.now());
+            // If stale execution, use last state update time to compute duration
+          case STALE ->
+              ChronoUnit.SECONDS.between(
+                  execution.getExecutionStartDate().toInstant(), state.getUpdateTime().toInstant());
+          case UNKNOWN -> 0L;
+        };
+
+    this.componentStatus = new LinkedHashMap<>();
   }
 }

@@ -22,6 +22,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.hop.core.Const;
 import org.apache.hop.core.Props;
 import org.apache.hop.core.exception.HopException;
 import org.apache.hop.core.gui.plugin.GuiPlugin;
@@ -115,6 +116,7 @@ public class PipelineExecutionHistoryDelegate {
     toolBar.pack();
     PropsUi.setLook(toolBar, Props.WIDGET_STYLE_TOOLBAR);
 
+    // Create the chart
     wChart = new ExecutionHistoryChart(composite, SWT.NONE);
     wChart.setLayoutData(new FormDataBuilder().fullWidth().top(toolBar).bottom().result());
 
@@ -151,6 +153,8 @@ public class PipelineExecutionHistoryDelegate {
           metadataProvider.getSerializer(ExecutionInfoLocation.class);
       List<ExecutionInfoLocation> locations = serializer.loadAll();
 
+
+
       ExecutionHistory history = new ExecutionHistory(ExecutionType.Pipeline, pipelineName);
       for (ExecutionInfoLocation locationMeta : locations) {
         try {
@@ -159,6 +163,8 @@ public class PipelineExecutionHistoryDelegate {
 
           // Keep the location around to close at the next refresh.
           locationMap.put(locationMeta.getName(), location);
+
+          long loggingInterval = Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
 
           IExecutionSelector selector =
               new DefaultExecutionSelector(
@@ -174,8 +180,9 @@ public class PipelineExecutionHistoryDelegate {
             if (execution != null && pipelineName.equals(execution.getName())) {
               // Don't load execution logging since that can be a lot of data
               ExecutionState state = location.getExecutionState(id, false);
+              ExecutionStatus status = ExecutionStatus.from(state, loggingInterval);
               ExecutionRun run =
-                  new ExecutionRun(execution, state, locationMeta.getName(), location);
+                  new ExecutionRun(execution, status, state, locationMeta.getName(), location);
               history.getRuns().add(run);
             }
           }
@@ -212,11 +219,12 @@ public class PipelineExecutionHistoryDelegate {
         ExecutionState state = run.getLocation().getExecutionState(childId, false);
         if (state != null) {
           String name = state.getName() + " (" + state.getCopyNr() + ')';
-
           history.addComponentIfAbsent(name);
-          run.getComponentStates().put(name, state);
+          run.getComponentStatus().put(name, ExecutionStatus.from(state, 20000));
         }
       }
     }
+
+    history.getComponentNames().sort(Comparator.naturalOrder());
   }
 }
