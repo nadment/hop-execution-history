@@ -26,8 +26,9 @@ import java.util.Date;
 import java.util.List;
 import org.apache.hop.core.Const;
 import org.apache.hop.execution.Execution;
-import org.apache.hop.execution.ExecutionState;
+import org.apache.hop.execution.IExecutionInfoLocation;
 import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.ui.core.ConstUi;
 import org.apache.hop.ui.core.PropsUi;
 import org.apache.hop.ui.core.dialog.ErrorDialog;
 import org.apache.hop.ui.core.gui.GuiResource;
@@ -52,13 +53,11 @@ public class ExecutionHistoryChart extends Canvas {
   private static final Class<?> PKG = ExecutionHistoryChart.class;
 
   /**
-   * This formatter produces locale-specific date-time strings with
-   * medium-length formatting for both date and time components.
+   * This formatter produces locale-specific date-time strings with medium-length formatting for
+   * both date and time components.
    */
   private static final DateTimeFormatter DATETIME_FORMATTER =
       DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM);
-
-  private static final String CONST_STOPPED = "Stopped";
 
   /**
    * Height in pixels, from the top of the canvas down to the duration-axis baseline (y = 0
@@ -105,6 +104,8 @@ public class ExecutionHistoryChart extends Canvas {
   /** Color of a run's bar/icon while its execution is still running. */
   private final Color runningColor;
 
+  private final Image waitingImage;
+
   /** History currently displayed, or {@code null} until {@link #setExecutionHistory} is called. */
   private @Nullable ExecutionHistory executionHistory;
 
@@ -137,6 +138,10 @@ public class ExecutionHistoryChart extends Canvas {
 
     finishedColor = new Color(92, 192, 196);
     runningColor = new Color(218, 170, 10);
+
+    waitingImage =
+        GuiResource.getInstance()
+            .loadAsResource(parent.getDisplay(), "ui/images/waiting.svg", ConstUi.SMALL_ICON_SIZE);
 
     addListener(SWT.Paint, this::paint);
     addListener(SWT.MouseMove, this::mouseMove);
@@ -275,6 +280,7 @@ public class ExecutionHistoryChart extends Canvas {
     }
 
     // Draw action name
+    gc.setForeground(resource.getColorBlack());
     int y = CHART_HEIGHT - scrollOffset + 2;
     for (String name : history.getComponentNames()) {
       if (y + lineHeight >= 0 && y <= area.height) {
@@ -287,7 +293,7 @@ public class ExecutionHistoryChart extends Canvas {
     if (selectedComponent >= 0) {
       int selectedActionY = CHART_HEIGHT + 2 + selectedComponent * lineHeight - scrollOffset;
       if (selectedActionY + lineHeight >= 0 && selectedActionY <= area.height) {
-        gc.setBackground(resource.getColorLightGray());
+        gc.setForeground(resource.getColorLightGray());
         gc.setLineStyle(SWT.LINE_SOLID);
         gc.drawRectangle(0, selectedActionY, area.width - 1, lineHeight);
       }
@@ -329,7 +335,7 @@ public class ExecutionHistoryChart extends Canvas {
             barAreaHeight + componentNames.size() * lineHeight);
       }
 
-      Color color = getExecutionStateColor(run.getExecutionState());
+      Color color = getExecutionStatusColor(run.getExecutionStatus());
       if (barHeight > 0) {
         gc.setBackground(color);
         gc.fillRoundRectangle(
@@ -346,8 +352,8 @@ public class ExecutionHistoryChart extends Canvas {
       // Draw action execution state icon
       int line = 0;
       for (String name : componentNames) {
-        ExecutionState state = run.getComponentStates().get(name);
-        Image image = getExecutionStateImage(state);
+        ExecutionStatus status = run.getComponentStatus().get(name);
+        Image image = getExecutionStatusImage(status);
 
         int iconY = CHART_HEIGHT + line * lineHeight - scrollOffset + 5;
         if (image != null && iconY + image.getBounds().height >= 0 && iconY <= area.height) {
@@ -396,9 +402,18 @@ public class ExecutionHistoryChart extends Canvas {
     ExecutionRun run = getSelectedExecutionRun();
     if (run != null) {
       Menu menu = new Menu(this);
+
       MenuItem openItem = new MenuItem(menu, SWT.PUSH);
       openItem.setText(BaseMessages.getString(PKG, "ExecutionHistoryChart.Menu.OpenExecution"));
       openItem.addListener(SWT.Selection, e -> openExecution(run));
+
+      new MenuItem(menu, SWT.SEPARATOR);
+
+      MenuItem deleteItem = new MenuItem(menu, SWT.PUSH);
+      deleteItem.setText(BaseMessages.getString(PKG, "ExecutionHistoryChart.Menu.DeleteExecution"));
+      deleteItem.setImage(GuiResource.getInstance().getImageDelete());
+      deleteItem.addListener(SWT.Selection, e -> deleteExecution(run));
+
       menu.setVisible(true);
     }
   }
@@ -468,14 +483,15 @@ public class ExecutionHistoryChart extends Canvas {
               formatDate(run.getExecutionStartDate()),
               formatDate(run.getExecutionState().getExecutionEndDate()),
               formatDuration(run.getDuration(), getChronoUnit(run.getDuration())),
-              getExecutionStateName(run.getExecutionState())));
-
+              run.getExecutionStatus().getDescription()));
     }
     // Mouse hover action execution state
     else {
       String name = executionHistory.getComponentNames().get(selectedComponent);
-      ExecutionState executionState = run.getComponentStates().get(name);
-      setToolTipText(getExecutionStateName(executionState));
+      ExecutionStatus executionStatus = run.getComponentStatus().get(name);
+      if (executionStatus != null) {
+        setToolTipText(executionStatus.getDescription());
+      }
     }
   }
 
@@ -515,68 +531,49 @@ public class ExecutionHistoryChart extends Canvas {
       Execution execution = run.getLocation().getExecution(run.getId());
       perspective.createExecutionViewer(locationName, execution, run.getExecutionState());
     } catch (Exception e) {
-      new ErrorDialog(getShell(), "Error", "Error showing viewer for execution", e);
+      new ErrorDialog(getShell(), "Error", "Error opening execution", e);
     }
   }
 
-  protected Color getExecutionStateColor(@Nullable ExecutionState state) {
+  private void deleteExecution(@Nullable ExecutionRun run) {
+    if (run == null) {
+      return;
+    }
+
+    try {
+      IExecutionInfoLocation location = run.getLocation();
+      location.deleteExecution(run.getId());
+      executionHistory.getRuns().remove(run);
+      redraw();
+    } catch (Exception e) {
+      new ErrorDialog(getShell(), "Error", "Error delete execution", e);
+    }
+  }
+
+  protected Color getExecutionStatusColor(@Nullable ExecutionStatus status) {
     GuiResource resource = GuiResource.getInstance();
-    if (state != null) {
-      if (state.isFailed()) {
-        if (CONST_STOPPED.equals(state.getStatusDescription())) {
-          return resource.getColorGray();
-        }
-        return resource.getColorRed();
-      }
-      if (state.isFinished()) {
-        return finishedColor;
-      }
-      if (state.isRunning()) {
-        return runningColor;
-      }
-    }
-    return resource.getColorLightGray();
+    return switch (status) {
+      case RUNNING -> runningColor;
+      case STOPPED -> resource.getColorGray();
+      case FAILED -> resource.getColorRed();
+      case FINISHED -> finishedColor;
+      case STALE -> resource.getColorPurple();
+      case UNKNOWN -> resource.getColorLightGray();
+      case null -> resource.getColorLightGray();
+    };
   }
 
-  protected @Nullable String getExecutionStateName(@Nullable ExecutionState state) {
-    if (state != null) {
-      if (state.isFailed()) {
-        if (CONST_STOPPED.equals(state.getStatusDescription())) {
-          return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Stopped");
-        }
-
-        return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Failed");
-      }
-      if (state.isFinished()) {
-        return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Completed");
-      }
-      if (state.isRunning()) {
-        return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Running");
-      }
-
-      return BaseMessages.getString(PKG, "ExecutionHistoryChart.State.Unknown");
-    }
-    return null;
-  }
-
-  protected static @Nullable Image getExecutionStateImage(@Nullable ExecutionState state) {
-    if (state == null) {
-      return null;
-    }
+  protected @Nullable Image getExecutionStatusImage(@Nullable ExecutionStatus status) {
     GuiResource resource = GuiResource.getInstance();
-    if (state.isFailed()) {
-      if (CONST_STOPPED.equals(state.getStatusDescription())) {
-        return resource.getImageErrorDisabled();
-      }
-      return resource.getImageFailure();
-    }
-    if (state.isFinished()) {
-      return resource.getImageSuccess();
-    }
-    if (state.isRunning()) {
-      return resource.getImageBusy();
-    }
-    return null;
+    return switch (status) {
+      case RUNNING -> resource.getImageBusy();
+      case STOPPED -> resource.getImageErrorDisabled();
+      case FAILED -> resource.getImageFailure();
+      case FINISHED -> resource.getImageSuccess();
+      case STALE -> waitingImage;
+      case UNKNOWN -> resource.getImageError();
+      case null -> null;
+    };
   }
 
   protected static ChronoUnit getChronoUnit(long second) {

@@ -22,6 +22,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.hop.core.Const;
 import org.apache.hop.core.Props;
 import org.apache.hop.core.exception.HopException;
 import org.apache.hop.core.gui.plugin.GuiPlugin;
@@ -166,6 +167,8 @@ public class WorkflowExecutionHistoryDelegate {
           // Keep the location around to close at the next refresh.
           locationMap.put(locationMeta.getName(), location);
 
+          long loggingInterval = Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
+
           IExecutionSelector selector =
               new DefaultExecutionSelector(
                   false, false, false, false, true, false, workflowName, LastPeriod.NONE);
@@ -181,8 +184,10 @@ public class WorkflowExecutionHistoryDelegate {
 
               // Don't load execution logging since that can be a lot of data
               ExecutionState state = location.getExecutionState(execution.getId(), false);
+              ExecutionStatus status = ExecutionStatus.from(state, loggingInterval);
               ExecutionRun run =
-                  new ExecutionRun(execution, state, locationMeta.getName(), location);
+                  new ExecutionRun(execution, status, state, locationMeta.getName(), location);
+
               history.getRuns().add(run);
             }
           }
@@ -230,16 +235,13 @@ public class WorkflowExecutionHistoryDelegate {
 
             history.addComponentIfAbsent(actionName);
 
-            // Add this one under that name
-            ExecutionState state = new ExecutionState();
-            state.setId(childId);
-            state.setParentId(run.getId());
-            state.setName(actionName);
-            state.setExecutionType(ExecutionType.Action);
+            ExecutionStatus status = ExecutionStatus.RUNNING;
             if (executionData.isFinished()) {
-              state.setExecutionEndDate(executionData.getCollectionDate());
+              status = ExecutionStatus.FINISHED;
             } else {
-              state.setStatusDescription("running");
+              if (run.getExecutionStatus() == ExecutionStatus.STALE) {
+                status = ExecutionStatus.STALE;
+              }
             }
 
             RowBuffer rowBuffer = executionData.getDataSets().get(ExecutionDataBuilder.KEY_RESULT);
@@ -250,10 +252,14 @@ public class WorkflowExecutionHistoryDelegate {
                   try {
                     if (rowMeta.getString(row, 0).equals(ExecutionDataBuilder.RESULT_KEY_ERRORS)) {
                       long errors = Long.parseLong(rowMeta.getString(row, 1));
-                      state.setFailed(errors > 0);
+                      if (errors > 0) {
+                        status = ExecutionStatus.FAILED;
+                      }
                     }
                     if (rowMeta.getString(row, 0).equals(ExecutionDataBuilder.RESULT_KEY_STOPPED)) {
-                      // state.setFailed("true".equalsIgnoreCase(rowMeta.getString(row, 1)));
+                      if ("true".equalsIgnoreCase(rowMeta.getString(row, 1))) {
+                        status = ExecutionStatus.STOPPED;
+                      }
                     }
                   } catch (Exception e) {
                     LogChannel.UI.logError("Error getting action result information", e);
@@ -262,9 +268,11 @@ public class WorkflowExecutionHistoryDelegate {
               }
             }
 
-            run.getComponentStates().put(actionName, state);
+            run.getComponentStatus().put(actionName, status);
           }
         }
+
+        history.getComponentNames().sort(Comparator.naturalOrder());
       }
     } catch (Exception e) {
       throw new HopException("Error getting child executions", e);
