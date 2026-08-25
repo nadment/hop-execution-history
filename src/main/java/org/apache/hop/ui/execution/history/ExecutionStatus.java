@@ -21,13 +21,16 @@ import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.i18n.BaseMessages;
 import org.apache.hop.metadata.api.IEnumHasCodeAndDescription;
 
-/** This enumeration describes the execution status for pipelines, workflows, transforms and actions. */
+/**
+ * This enumeration describes the execution status for pipelines, workflows, transforms and actions.
+ */
 public enum ExecutionStatus implements IEnumHasCodeAndDescription {
   STOPPED("ExecutionStatus.Stopped"),
   STALE("ExecutionStatus.Stale"),
   FAILED("ExecutionStatus.Failed"),
   FINISHED("ExecutionStatus.Completed"),
   RUNNING("ExecutionStatus.Running"),
+  PAUSED("ExecutionStatus.Paused"),
   UNKNOWN("ExecutionStatus.Unknown");
 
   private final String description;
@@ -50,17 +53,19 @@ public enum ExecutionStatus implements IEnumHasCodeAndDescription {
     if (state.isFailed()) {
       if ("Stopped".equals(state.getStatusDescription())) {
         return STOPPED;
-      } else {
-        return FAILED;
       }
+      return FAILED;
     }
     if (state.isFinished()) {
       return FINISHED;
     }
-    if (state.isStale(loggingInterval)) {
-      return STALE;
+    if ("Paused".equals(state.getStatusDescription())) {
+      return PAUSED;
     }
     if (state.isRunning()) {
+      if (state.isStale(loggingInterval)) {
+        return STALE;
+      }
       return RUNNING;
     }
     return UNKNOWN;

@@ -123,7 +123,10 @@ public class PipelineExecutionHistoryDelegate {
     return tab;
   }
 
-  /** Reload all execution information locations and rebuild the execution history. */
+  /**
+   * Refreshes the pipeline execution history by loading the most recent execution runs from all
+   * configured execution information locations.
+   */
   @GuiToolbarElement(
       root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
       id = TOOLBAR_ITEM_REFRESH,
@@ -153,8 +156,6 @@ public class PipelineExecutionHistoryDelegate {
           metadataProvider.getSerializer(ExecutionInfoLocation.class);
       List<ExecutionInfoLocation> locations = serializer.loadAll();
 
-
-
       ExecutionHistory history = new ExecutionHistory(ExecutionType.Pipeline, pipelineName);
       for (ExecutionInfoLocation locationMeta : locations) {
         try {
@@ -164,7 +165,7 @@ public class PipelineExecutionHistoryDelegate {
           // Keep the location around to close at the next refresh.
           locationMap.put(locationMeta.getName(), location);
 
-          long loggingInterval = Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
+          long loggingInterval = 2 * Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
 
           IExecutionSelector selector =
               new DefaultExecutionSelector(
@@ -183,6 +184,7 @@ public class PipelineExecutionHistoryDelegate {
               ExecutionStatus status = ExecutionStatus.from(state, loggingInterval);
               ExecutionRun run =
                   new ExecutionRun(execution, status, state, locationMeta.getName(), location);
+
               history.getRuns().add(run);
             }
           }

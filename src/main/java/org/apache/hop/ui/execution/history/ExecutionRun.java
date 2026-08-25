@@ -80,7 +80,7 @@ public class ExecutionRun {
               ChronoUnit.SECONDS.between(
                   execution.getExecutionStartDate().toInstant(), Instant.now());
             // If stale execution, use last state update time to compute duration
-          case STALE ->
+          case PAUSED, STALE ->
               ChronoUnit.SECONDS.between(
                   execution.getExecutionStartDate().toInstant(), state.getUpdateTime().toInstant());
           case UNKNOWN -> 0L;

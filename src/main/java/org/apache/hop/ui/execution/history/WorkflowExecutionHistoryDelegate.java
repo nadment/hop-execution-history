@@ -128,7 +128,10 @@ public class WorkflowExecutionHistoryDelegate {
     return tab;
   }
 
-  /** Reload all execution information locations and rebuild the execution history. */
+  /**
+   * Refreshes the workflow execution history by loading the most recent execution runs from all
+   * configured execution information locations.
+   */
   @GuiToolbarElement(
       root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
       id = TOOLBAR_ITEM_REFRESH,
@@ -167,7 +170,8 @@ public class WorkflowExecutionHistoryDelegate {
           // Keep the location around to close at the next refresh.
           locationMap.put(locationMeta.getName(), location);
 
-          long loggingInterval = Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
+          // Logging interval used to determine whether an execution is stale
+          long loggingInterval = 2 * Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
 
           IExecutionSelector selector =
               new DefaultExecutionSelector(

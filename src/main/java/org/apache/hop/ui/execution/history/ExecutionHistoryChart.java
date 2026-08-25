@@ -554,11 +554,11 @@ public class ExecutionHistoryChart extends Canvas {
     GuiResource resource = GuiResource.getInstance();
     return switch (status) {
       case RUNNING -> runningColor;
+      case PAUSED -> resource.getColorPurple();
       case STOPPED -> resource.getColorGray();
       case FAILED -> resource.getColorRed();
       case FINISHED -> finishedColor;
-      case STALE -> resource.getColorPurple();
-      case UNKNOWN -> resource.getColorLightGray();
+      case STALE, UNKNOWN -> resource.getColorLightGray();
       case null -> resource.getColorLightGray();
     };
   }
@@ -567,10 +567,11 @@ public class ExecutionHistoryChart extends Canvas {
     GuiResource resource = GuiResource.getInstance();
     return switch (status) {
       case RUNNING -> resource.getImageBusy();
+      case PAUSED -> waitingImage;
       case STOPPED -> resource.getImageErrorDisabled();
       case FAILED -> resource.getImageFailure();
       case FINISHED -> resource.getImageSuccess();
-      case STALE -> waitingImage;
+      case STALE -> resource.getImageWarning();
       case UNKNOWN -> resource.getImageError();
       case null -> null;
     };
