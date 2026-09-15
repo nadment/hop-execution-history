@@ -135,7 +135,7 @@ public class WorkflowExecutionHistoryDelegate {
   @GuiToolbarElement(
       root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
       id = TOOLBAR_ITEM_REFRESH,
-      toolTip = "i18n::ExecutionHistory.Button.Refresh.Tooltip",
+      toolTip = "i18n::System.Button.Refresh",
       image = "ui/images/refresh.svg")
   @GuiKeyboardShortcut(key = SWT.F5)
   @GuiOsxKeyboardShortcut(key = SWT.F5)
