@@ -20,7 +20,7 @@ Apache Hop plugin dealing with the history of pipeline and workflow executions.
 Project built with Java, using Eclipse SWT and JFace as frontend, using Maven as the build system.
 
 ## Tech Stack
-- **Backend:** Java 21, Lombok, Apache Hop 2.19.0-SNAPSHOT
+- **Backend:** Java 21, Lombok, Apache Hop 2.20.0
 - **Frontend:** Eclipse SWT and JFace
 - **Build:** Maven
 - **Testing:** JUnit 6
@@ -29,18 +29,30 @@ Project built with Java, using Eclipse SWT and JFace as frontend, using Maven as
 
 | Command | Purpose |
 | --- | --- |
-| `mvn clean verify` | Full build with RAT, Checkstyle, Spotless and tests |
-| `mvn clean install` | Build and deploy the plugin into `${hop.home}/custom` |
-| `mvn clean install -Pfast-build` | Skip tests and quality checks while iterating |
+| `mvn clean verify` | Full build with RAT, Checkstyle, Spotless and tests; produces `target/hop-execution-history-<version>.zip` |
+| `mvn clean package -DskipTests` | Build the plugin zip without running the tests while iterating |
 
 Code is formatted by `spotless:apply` (google-java-format) during the `compile` phase; never
 hand-format against it.
+
+The Hop parent POM compiles with ECJ, which needs a Lombok agent that a parent POM can't provide;
+`pom.xml` therefore forces `<compilerId>javac</compilerId>`. Keep it when upgrading the parent.
+
+## Deploy into Hop
+
+No Maven goal deploys the plugin: copy it by hand into a local Hop install.
+
+1. Build the zip with `mvn clean verify`.
+2. Close Hop GUI, so the plugin jar is not locked.
+3. Delete `<hop>/custom/plugins/misc/execution-history`, so two plugin versions are never loaded
+   together.
+4. Unzip `target/hop-execution-history-<version>.zip` into `<hop>/custom`.
 
 ## Project layout
 
 ```
 src/assembly/assembly.xml            Hop plugin zip descriptor (plugins/misc/execution-history)
-src/main/java/org/apache/hop/execution/history/    Engine side code
+src/main/java/org/apache/hop/ui/execution/history/    GUI code: history tabs and chart
 src/main/resources/.../messages/     i18n bundles read by BaseMessages
 src/main/resources/version.xml       Plugin version, filtered at package time
 tools/maven/checkstyle.xml           Checkstyle rules referenced by the Hop parent POM
