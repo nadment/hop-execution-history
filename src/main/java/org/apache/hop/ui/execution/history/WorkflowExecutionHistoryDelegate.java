@@ -33,12 +33,9 @@ import org.apache.hop.core.logging.LogChannel;
 import org.apache.hop.core.row.IRowMeta;
 import org.apache.hop.core.row.RowBuffer;
 import org.apache.hop.execution.DefaultExecutionSelector;
-import org.apache.hop.execution.Execution;
 import org.apache.hop.execution.ExecutionData;
 import org.apache.hop.execution.ExecutionDataBuilder;
-import org.apache.hop.execution.ExecutionDataSetMeta;
 import org.apache.hop.execution.ExecutionInfoLocation;
-import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.execution.ExecutionType;
 import org.apache.hop.execution.IExecutionInfoLocation;
 import org.apache.hop.execution.IExecutionSelector;
@@ -124,8 +121,7 @@ public class WorkflowExecutionHistoryDelegate {
   public CTabItem addExecutionHistoryTab(CTabFolder tabFolder) {
     CTabItem tab = new CTabItem(tabFolder, SWT.NONE);
     tab.setFont(GuiResource.getInstance().getFontDefault());
-    // TODO:
-    // tab.setImage(GuiResource.getInstance().getImagePulse());
+    // TODO: use GuiResource.getInstance().getImagePulse() once Hop provides it
     tab.setImage(
         GuiResource.getInstance()
             .getImage(
@@ -191,57 +187,11 @@ public class WorkflowExecutionHistoryDelegate {
       List<ExecutionInfoLocation> locations = serializer.loadAll();
 
       ExecutionHistory history = new ExecutionHistory(ExecutionType.Workflow, workflowName);
+      IExecutionSelector selector =
+          new DefaultExecutionSelector(
+              false, false, false, false, true, false, workflowName, LastPeriod.NONE);
       for (ExecutionInfoLocation locationMeta : locations) {
-        try {
-          IExecutionInfoLocation location = locationMeta.getExecutionInfoLocation();
-          location.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
-
-          // Keep the location around to close at the next refresh.
-          locationMap.put(locationMeta.getName(), location);
-
-          // Logging interval used to determine whether an execution is stale
-          long loggingInterval = 2 * Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
-
-          IExecutionSelector selector =
-              new DefaultExecutionSelector(
-                  false, false, false, false, true, false, workflowName, LastPeriod.NONE);
-          int loadedCount = 0;
-          for (String id : location.findExecutionIDs(selector)) {
-
-            // Limit to last executions of this location, the global limit is applied once merged
-            if (loadedCount >= runLimit) {
-              break;
-            }
-
-            // An unreadable execution must not hide the other executions of the location
-            try {
-              Execution execution = location.getExecution(id);
-              if (execution == null || !workflowName.equals(execution.getName())) {
-                continue;
-              }
-
-              // Don't load execution logging since that can be a lot of data
-              ExecutionState state = location.getExecutionState(execution.getId(), false);
-              if (state == null) {
-                continue;
-              }
-              ExecutionStatus status = ExecutionStatus.from(state, loggingInterval);
-              ExecutionRun run =
-                  new ExecutionRun(execution, status, state, locationMeta.getName(), location);
-
-              history.getRuns().add(run);
-              loadedCount++;
-            } catch (Exception ex) {
-              LogChannel.UI.logError(
-                  "Unable to load execution " + id + " from location " + locationMeta.getName(),
-                  ex);
-            }
-          }
-        } catch (Exception ex) {
-          LogChannel.UI.logError(
-              "Unable to retrieve execution information from location " + locationMeta.getName(),
-              ex);
-        }
+        loadLocation(history, locationMeta, selector);
       }
 
       // Sort by registration date desc and keep the most recent runs of all locations
@@ -259,6 +209,29 @@ public class WorkflowExecutionHistoryDelegate {
       LogChannel.UI.logError("Error refreshing workflow execution history", e);
     } finally {
       shell.setCursor(null);
+    }
+  }
+
+  /**
+   * Adds the runs of one location to the history. A failing location is logged, so that the other
+   * locations are still loaded.
+   */
+  private void loadLocation(
+      ExecutionHistory history, ExecutionInfoLocation locationMeta, IExecutionSelector selector) {
+    try {
+      IExecutionInfoLocation location = locationMeta.getExecutionInfoLocation();
+      location.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
+
+      // Keep the location around to close at the next refresh.
+      locationMap.put(locationMeta.getName(), location);
+
+      // Logging interval used to determine whether an execution is stale
+      long loggingInterval = 2 * Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
+
+      history.loadRuns(locationMeta.getName(), location, selector, loggingInterval, runLimit);
+    } catch (Exception e) {
+      LogChannel.UI.logError(
+          "Unable to retrieve execution information from location " + locationMeta.getName(), e);
     }
   }
 
@@ -317,55 +290,7 @@ public class WorkflowExecutionHistoryDelegate {
         // List all action execution states
         List<String> childIds = run.getLocation().findChildIds(ExecutionType.Workflow, run.getId());
         for (String childId : childIds) {
-          // Actions don't have an execution state of their own (getExecutionState returns null),
-          // so create the status based on the execution data
-          ExecutionData executionData = run.getLocation().getExecutionData(run.getId(), childId);
-          if (executionData == null) {
-            continue;
-          }
-
-          ExecutionDataSetMeta dataSetMeta = executionData.getDataSetMeta();
-          if (dataSetMeta != null) {
-            String actionName = dataSetMeta.getName();
-
-            history.addComponentIfAbsent(actionName);
-
-            ExecutionStatus status = ExecutionStatus.RUNNING;
-            if (executionData.isFinished()) {
-              status = ExecutionStatus.FINISHED;
-            } else {
-              if (run.getExecutionStatus() == ExecutionStatus.STALE) {
-                status = ExecutionStatus.STALE;
-              }
-            }
-
-            RowBuffer rowBuffer = executionData.getDataSets().get(ExecutionDataBuilder.KEY_RESULT);
-            if (rowBuffer != null) {
-              IRowMeta rowMeta = rowBuffer.getRowMeta();
-              if (rowMeta != null) {
-                for (Object[] row : rowBuffer.getBuffer()) {
-                  try {
-                    String key = rowMeta.getString(row, 0);
-                    if (ExecutionDataBuilder.RESULT_KEY_ERRORS.equals(key)) {
-                      long errors = Long.parseLong(rowMeta.getString(row, 1));
-                      if (errors > 0) {
-                        status = ExecutionStatus.FAILED;
-                      }
-                    }
-                    if (ExecutionDataBuilder.RESULT_KEY_STOPPED.equals(key)) {
-                      if ("true".equalsIgnoreCase(rowMeta.getString(row, 1))) {
-                        status = ExecutionStatus.STOPPED;
-                      }
-                    }
-                  } catch (Exception e) {
-                    LogChannel.UI.logError("Error getting action result information", e);
-                  }
-                }
-              }
-            }
-
-            run.getComponentStatus().put(actionName, status);
-          }
+          loadActionState(history, run, childId);
         }
       }
 
@@ -373,5 +298,71 @@ public class WorkflowExecutionHistoryDelegate {
     } catch (Exception e) {
       throw new HopException("Error getting child executions", e);
     }
+  }
+
+  /** Registers one action of a run and stores its status, if the action has execution data. */
+  private static void loadActionState(ExecutionHistory history, ExecutionRun run, String childId)
+      throws HopException {
+    // Actions don't have an execution state of their own (getExecutionState returns null),
+    // so create the status based on the execution data
+    ExecutionData executionData = run.getLocation().getExecutionData(run.getId(), childId);
+    if (executionData == null || executionData.getDataSetMeta() == null) {
+      return;
+    }
+
+    String actionName = executionData.getDataSetMeta().getName();
+    history.addComponentIfAbsent(actionName);
+    run.getComponentStatus()
+        .put(actionName, getActionStatus(run.getExecutionStatus(), executionData));
+  }
+
+  /**
+   * Derives the status of an action from its execution data: finished or not, then the {@code
+   * errors} and {@code stopped} result values.
+   *
+   * @param runStatus the status of the workflow run; an unfinished action of a stale run is stale
+   * @param executionData the execution data of the action
+   * @return the action status
+   */
+  static ExecutionStatus getActionStatus(ExecutionStatus runStatus, ExecutionData executionData) {
+    ExecutionStatus status = ExecutionStatus.RUNNING;
+    if (executionData.isFinished()) {
+      status = ExecutionStatus.FINISHED;
+    } else if (runStatus == ExecutionStatus.STALE) {
+      status = ExecutionStatus.STALE;
+    }
+
+    RowBuffer rowBuffer = executionData.getDataSets().get(ExecutionDataBuilder.KEY_RESULT);
+    if (rowBuffer == null || rowBuffer.getRowMeta() == null) {
+      return status;
+    }
+
+    for (Object[] row : rowBuffer.getBuffer()) {
+      status = getResultStatus(rowBuffer.getRowMeta(), row, status);
+    }
+    return status;
+  }
+
+  /**
+   * Applies one result row of an action: errors make it failed, a stop makes it stopped.
+   *
+   * @return the new status, or {@code status} if the row doesn't change it or can't be read
+   */
+  private static ExecutionStatus getResultStatus(
+      IRowMeta rowMeta, Object[] row, ExecutionStatus status) {
+    try {
+      String key = rowMeta.getString(row, 0);
+      if (ExecutionDataBuilder.RESULT_KEY_ERRORS.equals(key)) {
+        return Long.parseLong(rowMeta.getString(row, 1)) > 0 ? ExecutionStatus.FAILED : status;
+      }
+      if (ExecutionDataBuilder.RESULT_KEY_STOPPED.equals(key)) {
+        return "true".equalsIgnoreCase(rowMeta.getString(row, 1))
+            ? ExecutionStatus.STOPPED
+            : status;
+      }
+    } catch (Exception e) {
+      LogChannel.UI.logError("Error getting action result information", e);
+    }
+    return status;
   }
 }

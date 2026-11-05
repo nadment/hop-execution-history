@@ -403,22 +403,27 @@ public class ExecutionHistoryChart extends Canvas {
             CHART_HEIGHT - scrollOffset);
       }
 
-      // Draw action execution state icon
-      int line = 0;
-      for (String name : componentNames) {
-        ExecutionStatus status = run.getComponentStatus().get(name);
-        Image image = getExecutionStatusImage(status);
-
-        int iconY = CHART_HEIGHT + line * lineHeight - scrollOffset + 5;
-        if (image != null && iconY + image.getBounds().height >= 0 && iconY <= area.height) {
-          gc.drawImage(image, x + pad, iconY);
-        }
-
-        line++;
-      }
+      drawStatusIcons(gc, area, run, componentNames, x + pad);
     }
 
     gc.setClipping((Rectangle) null);
+  }
+
+  /** Draw the execution state icon of each component of a run, in its column. */
+  private void drawStatusIcons(
+      GC gc, Rectangle area, ExecutionRun run, List<String> componentNames, int x) {
+    int line = 0;
+    for (String name : componentNames) {
+      ExecutionStatus status = run.getComponentStatus().get(name);
+      Image image = getExecutionStatusImage(status);
+
+      int iconY = CHART_HEIGHT + line * lineHeight - scrollOffset + 5;
+      if (image != null && iconY + image.getBounds().height >= 0 && iconY <= area.height) {
+        gc.drawImage(image, x, iconY);
+      }
+
+      line++;
+    }
   }
 
   /**
@@ -510,49 +515,48 @@ public class ExecutionHistoryChart extends Canvas {
    * cached by the last {@link #paint}, and redraws only when the selection changed.
    */
   private void mouseMove(Event event) {
+    ExecutionHistory history = this.executionHistory;
+    if (history == null) {
+      return;
+    }
+
     int previousSelectedExecution = selectedExecution;
     int previousSelectedAction = selectedComponent;
 
-    if (executionHistory != null) {
-      int y = event.y + scrollOffset;
+    int y = event.y + scrollOffset;
+    if (y >= TOP_MARGIN_HEIGHT) {
+      int line = Math.floorDiv(y - CHART_HEIGHT, lineHeight);
+      selectedComponent = line >= 0 && line < lineCount ? line : -1;
 
-      if (y >= TOP_MARGIN_HEIGHT) {
-
-        // Columns are scrolled horizontally, except over the component names
-        int column =
-            event.x < nameWidth
-                ? -1
-                : Math.floorDiv(event.x - nameWidth + horizontalOffset, cellWidth);
-        if (column >= 0 && column < executionHistory.getRuns().size()) {
-          selectedExecution = column;
-        } else {
-          selectedExecution = -1;
-        }
-
-        int line = Math.floorDiv(y - CHART_HEIGHT, lineHeight);
-        if (line >= 0 && line < lineCount) {
-          selectedComponent = line;
-        } else {
-          selectedComponent = -1;
-          if (line >= lineCount) {
-            selectedExecution = -1;
-          }
-        }
-      }
-
-      if (previousSelectedExecution != selectedExecution
-          || previousSelectedAction != selectedComponent) {
-
-        // Set hand cursor when mouse hovers a column
-        if (selectedExecution >= 0) {
-          setCursor(getDisplay().getSystemCursor(SWT.CURSOR_HAND));
-        } else {
-          setCursor(null);
-        }
-
-        redraw();
-      }
+      // Below the last component row, no run is selected
+      selectedExecution = line < lineCount ? getColumnAt(event.x, history.getRuns().size()) : -1;
     }
+
+    if (previousSelectedExecution == selectedExecution
+        && previousSelectedAction == selectedComponent) {
+      return;
+    }
+
+    // Set hand cursor when mouse hovers a column
+    setCursor(selectedExecution >= 0 ? getDisplay().getSystemCursor(SWT.CURSOR_HAND) : null);
+    redraw();
+  }
+
+  /**
+   * Returns the run column under a horizontal position, using the layout cached by the last {@link
+   * #paint}.
+   *
+   * @param x the horizontal position in the canvas, in pixels
+   * @param runCount the number of runs
+   * @return the column index, or -1 over the component names or after the last run
+   */
+  private int getColumnAt(int x, int runCount) {
+    // Columns are scrolled horizontally, except over the component names
+    if (x < nameWidth) {
+      return -1;
+    }
+    int column = Math.floorDiv(x - nameWidth + horizontalOffset, cellWidth);
+    return column < runCount ? column : -1;
   }
 
   /** Shows the run details over a bar, or the component status over a status icon. */

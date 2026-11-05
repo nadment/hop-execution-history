@@ -31,7 +31,6 @@ import org.apache.hop.core.gui.plugin.tab.GuiTab;
 import org.apache.hop.core.gui.plugin.toolbar.GuiToolbarElement;
 import org.apache.hop.core.logging.LogChannel;
 import org.apache.hop.execution.DefaultExecutionSelector;
-import org.apache.hop.execution.Execution;
 import org.apache.hop.execution.ExecutionInfoLocation;
 import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.execution.ExecutionType;
@@ -119,8 +118,7 @@ public class PipelineExecutionHistoryDelegate {
   public CTabItem addExecutionHistoryTab(CTabFolder tabFolder) {
     CTabItem tab = new CTabItem(tabFolder, SWT.NONE);
     tab.setFont(GuiResource.getInstance().getFontDefault());
-    // TODO:
-    // tab.setImage(GuiResource.getInstance().getImagePulse());
+    // TODO: use GuiResource.getInstance().getImagePulse() once Hop provides it
     tab.setImage(
         GuiResource.getInstance()
             .getImage(
@@ -186,56 +184,11 @@ public class PipelineExecutionHistoryDelegate {
       List<ExecutionInfoLocation> locations = serializer.loadAll();
 
       ExecutionHistory history = new ExecutionHistory(ExecutionType.Pipeline, pipelineName);
+      IExecutionSelector selector =
+          new DefaultExecutionSelector(
+              false, false, false, false, false, true, pipelineName, LastPeriod.NONE);
       for (ExecutionInfoLocation locationMeta : locations) {
-        try {
-          IExecutionInfoLocation location = locationMeta.getExecutionInfoLocation();
-          location.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
-
-          // Keep the location around to close at the next refresh.
-          locationMap.put(locationMeta.getName(), location);
-
-          long loggingInterval = 2 * Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
-
-          IExecutionSelector selector =
-              new DefaultExecutionSelector(
-                  false, false, false, false, false, true, pipelineName, LastPeriod.NONE);
-          int loadedCount = 0;
-          for (String id : location.findExecutionIDs(selector)) {
-
-            // Limit to last executions of this location, the global limit is applied once merged
-            if (loadedCount >= runLimit) {
-              break;
-            }
-
-            // An unreadable execution must not hide the other executions of the location
-            try {
-              Execution execution = location.getExecution(id);
-              if (execution == null || !pipelineName.equals(execution.getName())) {
-                continue;
-              }
-
-              // Don't load execution logging since that can be a lot of data
-              ExecutionState state = location.getExecutionState(id, false);
-              if (state == null) {
-                continue;
-              }
-              ExecutionStatus status = ExecutionStatus.from(state, loggingInterval);
-              ExecutionRun run =
-                  new ExecutionRun(execution, status, state, locationMeta.getName(), location);
-
-              history.getRuns().add(run);
-              loadedCount++;
-            } catch (Exception ex) {
-              LogChannel.UI.logError(
-                  "Unable to load execution " + id + " from location " + locationMeta.getName(),
-                  ex);
-            }
-          }
-        } catch (Exception ex) {
-          LogChannel.UI.logError(
-              "Unable to retrieve execution information from location " + locationMeta.getName(),
-              ex);
-        }
+        loadLocation(history, locationMeta, selector);
       }
 
       // Sort by registration date desc and keep the most recent runs of all locations
@@ -253,6 +206,29 @@ public class PipelineExecutionHistoryDelegate {
       LogChannel.UI.logError("Error refreshing pipeline execution history", e);
     } finally {
       shell.setCursor(null);
+    }
+  }
+
+  /**
+   * Adds the runs of one location to the history. A failing location is logged, so that the other
+   * locations are still loaded.
+   */
+  private void loadLocation(
+      ExecutionHistory history, ExecutionInfoLocation locationMeta, IExecutionSelector selector) {
+    try {
+      IExecutionInfoLocation location = locationMeta.getExecutionInfoLocation();
+      location.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
+
+      // Keep the location around to close at the next refresh.
+      locationMap.put(locationMeta.getName(), location);
+
+      // Logging interval used to determine whether an execution is stale
+      long loggingInterval = 2 * Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
+
+      history.loadRuns(locationMeta.getName(), location, selector, loggingInterval, runLimit);
+    } catch (Exception e) {
+      LogChannel.UI.logError(
+          "Unable to retrieve execution information from location " + locationMeta.getName(), e);
     }
   }
 

@@ -21,7 +21,14 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import lombok.Getter;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.logging.LogChannel;
+import org.apache.hop.execution.Execution;
+import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.execution.ExecutionType;
+import org.apache.hop.execution.IExecutionInfoLocation;
+import org.apache.hop.execution.IExecutionSelector;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Execution history of a single pipeline or workflow, as displayed by {@link
@@ -78,6 +85,71 @@ public class ExecutionHistory {
   public void addComponentIfAbsent(String name) {
     if (!componentNames.contains(name)) {
       componentNames.add(name);
+    }
+  }
+
+  /**
+   * Adds the most recent runs of this pipeline or workflow found in a location.
+   *
+   * <p>The location is expected to list the most recent executions first. An unreadable execution
+   * is logged and skipped, so that it doesn't hide the other executions of the location.
+   *
+   * @param locationName the name of the execution information location metadata
+   * @param location the initialized execution information location
+   * @param selector selects the executions of this pipeline or workflow
+   * @param loggingInterval maximum delay in milliseconds between two state updates of a living
+   *     execution, used to detect stale executions
+   * @param limit the maximum number of runs to add from this location
+   * @throws HopException if the executions of the location can't be listed
+   */
+  public void loadRuns(
+      String locationName,
+      IExecutionInfoLocation location,
+      IExecutionSelector selector,
+      long loggingInterval,
+      int limit)
+      throws HopException {
+    int loadedCount = 0;
+    for (String id : location.findExecutionIDs(selector)) {
+      // Limit to last executions of this location, the global limit is applied once merged
+      if (loadedCount >= limit) {
+        break;
+      }
+
+      ExecutionRun run = loadRun(locationName, location, id, loggingInterval);
+      if (run != null) {
+        runs.add(run);
+        loadedCount++;
+      }
+    }
+  }
+
+  /**
+   * Reads one execution of a location.
+   *
+   * @return the run, or {@code null} if the execution belongs to another pipeline or workflow, has
+   *     no state or can't be read
+   */
+  private @Nullable ExecutionRun loadRun(
+      String locationName, IExecutionInfoLocation location, String id, long loggingInterval) {
+    try {
+      Execution execution = location.getExecution(id);
+      if (execution == null || !name.equals(execution.getName())) {
+        return null;
+      }
+
+      // Don't load execution logging since that can be a lot of data
+      ExecutionState state = location.getExecutionState(id, false);
+      if (state == null) {
+        return null;
+      }
+
+      ExecutionStatus status = ExecutionStatus.from(state, loggingInterval);
+      return new ExecutionRun(execution, status, state, locationName, location);
+    } catch (Exception e) {
+      LogChannel.UI.logError(
+          "Unable to load execution " + id + " from location " + locationName, e);
+      return null;
     }
   }
 

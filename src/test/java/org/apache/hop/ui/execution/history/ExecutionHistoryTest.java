@@ -18,15 +18,50 @@
 package org.apache.hop.ui.execution.history;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.util.Date;
 import java.util.List;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.logging.HopLogStore;
 import org.apache.hop.execution.Execution;
 import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.execution.ExecutionType;
+import org.apache.hop.execution.IExecutionInfoLocation;
+import org.apache.hop.execution.IExecutionSelector;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class ExecutionHistoryTest {
+
+  /** Unreadable executions are logged, which needs the Hop log store. */
+  @BeforeAll
+  static void initLogStore() {
+    HopLogStore.init();
+  }
+
+  /** Simulates a location listing the given execution IDs, most recent first. */
+  private static IExecutionInfoLocation location(String... ids) throws HopException {
+    IExecutionInfoLocation location = mock(IExecutionInfoLocation.class);
+    when(location.findExecutionIDs(any())).thenReturn(List.of(ids));
+    return location;
+  }
+
+  /** Makes the location return a finished execution of the given pipeline. */
+  private static void addExecution(IExecutionInfoLocation location, String id, String name)
+      throws HopException {
+    Execution execution = new Execution();
+    execution.setId(id);
+    execution.setName(name);
+    when(location.getExecution(id)).thenReturn(execution);
+    ExecutionState state = new ExecutionState();
+    state.setExecutionEndDate(new Date());
+    when(location.getExecutionState(id, false)).thenReturn(state);
+  }
 
   /** Creates a finished run registered at the given time, or without registration date. */
   private static ExecutionRun run(String id, Long registrationTime) {
@@ -41,6 +76,36 @@ class ExecutionHistoryTest {
 
   private static List<String> ids(ExecutionHistory history) {
     return history.getRuns().stream().map(ExecutionRun::getId).toList();
+  }
+
+  @Test
+  void loadRunsSkipsForeignMissingAndUnreadableExecutions() throws HopException {
+    IExecutionInfoLocation location = location("other", "noState", "broken", "ok");
+    addExecution(location, "other", "another pipeline");
+    Execution withoutState = new Execution();
+    withoutState.setName("test");
+    when(location.getExecution("noState")).thenReturn(withoutState);
+    when(location.getExecution("broken")).thenThrow(new HopException("unreadable"));
+    addExecution(location, "ok", "test");
+
+    ExecutionHistory history = new ExecutionHistory(ExecutionType.Pipeline, "test");
+    history.loadRuns("location", location, mock(IExecutionSelector.class), 20000, 10);
+
+    assertEquals(List.of("ok"), ids(history));
+  }
+
+  @Test
+  void loadRunsStopsReadingAtTheLimit() throws HopException {
+    IExecutionInfoLocation location = location("1", "2", "3");
+    addExecution(location, "1", "test");
+    addExecution(location, "2", "test");
+    addExecution(location, "3", "test");
+
+    ExecutionHistory history = new ExecutionHistory(ExecutionType.Workflow, "test");
+    history.loadRuns("location", location, mock(IExecutionSelector.class), 20000, 2);
+
+    assertEquals(List.of("1", "2"), ids(history));
+    verify(location, never()).getExecution("3");
   }
 
   @Test
