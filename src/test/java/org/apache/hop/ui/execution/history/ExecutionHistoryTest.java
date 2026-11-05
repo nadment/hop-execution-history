@@ -115,7 +115,7 @@ class ExecutionHistoryTest {
     history.getRuns().add(run("none", null));
     history.getRuns().add(run("new", 3L));
 
-    history.sortAndTruncate(ExecutionHistory.RUN_LIMIT);
+    history.sortAndTruncate(ExecutionHistory.RUN_PAGE_SIZE);
 
     assertEquals(List.of("new", "old", "none"), ids(history));
   }
@@ -123,17 +123,18 @@ class ExecutionHistoryTest {
   @Test
   void sortAndTruncateKeepsMostRecentRunsOfAllLocations() {
     ExecutionHistory history = new ExecutionHistory(ExecutionType.Workflow, "test");
-    // Simulates two locations, each contributing RUN_LIMIT runs, interleaved in time
-    for (long i = 0; i < 2L * ExecutionHistory.RUN_LIMIT; i++) {
+    // Simulates two locations, each contributing RUN_PAGE_SIZE runs, interleaved in time
+    for (long i = 0; i < 2L * ExecutionHistory.RUN_PAGE_SIZE; i++) {
       history.getRuns().add(run(String.valueOf(i), i));
     }
 
-    history.sortAndTruncate(ExecutionHistory.RUN_LIMIT);
+    history.sortAndTruncate(ExecutionHistory.RUN_PAGE_SIZE);
 
-    assertEquals(ExecutionHistory.RUN_LIMIT, history.getRuns().size());
-    assertEquals(String.valueOf(2L * ExecutionHistory.RUN_LIMIT - 1), history.getRun(0).getId());
+    assertEquals(ExecutionHistory.RUN_PAGE_SIZE, history.getRuns().size());
     assertEquals(
-        String.valueOf(ExecutionHistory.RUN_LIMIT),
-        history.getRun(ExecutionHistory.RUN_LIMIT - 1).getId());
+        String.valueOf(2L * ExecutionHistory.RUN_PAGE_SIZE - 1), history.getRun(0).getId());
+    assertEquals(
+        String.valueOf(ExecutionHistory.RUN_PAGE_SIZE),
+        history.getRun(ExecutionHistory.RUN_PAGE_SIZE - 1).getId());
   }
 }

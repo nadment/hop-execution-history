@@ -86,7 +86,7 @@ public class PipelineExecutionHistoryDelegate {
    * Maximum number of runs to load, raised by {@link #getMoreHistory()} and {@link
    * #getAllHistory()}, and kept by {@link #refresh()}.
    */
-  private int runLimit = ExecutionHistory.RUN_LIMIT;
+  private int runLimit = ExecutionHistory.RUN_PAGE_SIZE;
 
   private GuiToolbarWidgets toolBarWidgets;
   private ExecutionHistoryChart wChart;
@@ -232,14 +232,14 @@ public class PipelineExecutionHistoryDelegate {
     }
   }
 
-  /** Loads {@link ExecutionHistory#RUN_LIMIT} more runs than currently displayed. */
+  /** Loads {@link ExecutionHistory#RUN_PAGE_SIZE} more runs than currently displayed. */
   @GuiToolbarElement(
       root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
       id = TOOLBAR_ITEM_GET_MORE,
       toolTip = "i18n::ExecutionHistory.Toolbar.GetMoreHistory.Tooltip",
       image = "history-get-more.svg")
   public void getMoreHistory() {
-    runLimit = (int) Math.min(Integer.MAX_VALUE, (long) runLimit + ExecutionHistory.RUN_LIMIT);
+    runLimit = (int) Math.min(Integer.MAX_VALUE, (long) runLimit + ExecutionHistory.RUN_PAGE_SIZE);
     refresh();
   }
 

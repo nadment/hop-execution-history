@@ -51,7 +51,7 @@ public class ExecutionHistory {
   @Getter private List<String> componentNames;
 
   /** Number of execution runs loaded initially, and added by each "Get more history" request. */
-  protected static final int RUN_LIMIT = 25;
+  protected static final int RUN_PAGE_SIZE = 25;
 
   /**
    * Creates an empty history.
