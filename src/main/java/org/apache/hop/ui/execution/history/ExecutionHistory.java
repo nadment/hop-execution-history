@@ -28,6 +28,7 @@ import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.execution.ExecutionType;
 import org.apache.hop.execution.IExecutionInfoLocation;
 import org.apache.hop.execution.IExecutionSelector;
+import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -37,6 +38,7 @@ import org.jspecify.annotations.Nullable;
  * <p>It holds the most recent {@link ExecutionRun runs} (one chart column each) and the union of
  * the component names (transforms or actions, one chart row each) found across those runs.
  */
+@NullMarked
 public class ExecutionHistory {
   /** Name of the pipeline or workflow. */
   @Getter private final String name;

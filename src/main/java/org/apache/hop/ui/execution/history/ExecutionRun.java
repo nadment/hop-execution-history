@@ -26,6 +26,7 @@ import org.apache.hop.execution.Execution;
 import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.execution.ExecutionType;
 import org.apache.hop.execution.IExecutionInfoLocation;
+import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -35,6 +36,7 @@ import org.jspecify.annotations.Nullable;
  * getComponentStatus()} map is filled afterwards by the delegates with the status of each transform
  * or action of the execution.
  */
+@NullMarked
 @Getter
 public class ExecutionRun {
 

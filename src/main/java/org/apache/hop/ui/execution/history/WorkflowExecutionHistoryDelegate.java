@@ -59,12 +59,14 @@ import org.eclipse.swt.layout.FormLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Shell;
+import org.jspecify.annotations.NullMarked;
 
 /**
  * Adds an "Executions" tab to the workflow graph, showing an {@link ExecutionHistoryChart} of the
  * most recent executions of the workflow found in all execution information locations, with the
  * status of each action.
  */
+@NullMarked
 @GuiPlugin(
     name = "Workflow execution history",
     description = "Show the history of recent workflow executions")

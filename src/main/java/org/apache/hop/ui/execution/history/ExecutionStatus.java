@@ -20,10 +20,12 @@ package org.apache.hop.ui.execution.history;
 import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.i18n.BaseMessages;
 import org.apache.hop.metadata.api.IEnumHasCodeAndDescription;
+import org.jspecify.annotations.NullMarked;
 
 /**
  * This enumeration describes the execution status for pipelines, workflows, transforms and actions.
  */
+@NullMarked
 public enum ExecutionStatus implements IEnumHasCodeAndDescription {
   STOPPED("ExecutionStatus.Stopped"),
   STALE("ExecutionStatus.Stale"),
