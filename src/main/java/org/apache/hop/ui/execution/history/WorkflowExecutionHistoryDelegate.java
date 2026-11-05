@@ -53,13 +53,15 @@ import org.apache.hop.ui.hopgui.HopGui;
 import org.apache.hop.ui.hopgui.ToolbarFacade;
 import org.apache.hop.ui.hopgui.file.workflow.HopGuiWorkflowGraph;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.SWTException;
 import org.eclipse.swt.custom.CTabFolder;
 import org.eclipse.swt.custom.CTabItem;
 import org.eclipse.swt.layout.FormLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
-import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.widgets.Display;
 import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Adds an "Executions" tab to the workflow graph, showing an {@link ExecutionHistoryChart} of the
@@ -84,7 +86,10 @@ public class WorkflowExecutionHistoryDelegate {
   private final HopGui hopGui;
   private final HopGuiWorkflowGraph workflowGraph;
 
-  /** Locations initialized by the last refresh, keyed by name; closed at the next refresh. */
+  /**
+   * Locations used by the displayed runs, keyed by name; closed when a refresh replaces them or
+   * when the workflow graph is closed.
+   */
   private final Map<String, IExecutionInfoLocation> locationMap;
 
   /**
@@ -92,6 +97,12 @@ public class WorkflowExecutionHistoryDelegate {
    * #getAllHistory()}, and kept by {@link #refresh()}.
    */
   private int runLimit = ExecutionHistory.RUN_PAGE_SIZE;
+
+  /** Whether a refresh was ever started; the first display of the tab starts one. */
+  private boolean refreshed;
+
+  /** Whether a refresh is running in the background. Only used in the UI thread. */
+  private boolean refreshing;
 
   private GuiToolbarWidgets toolBarWidgets;
   private ExecutionHistoryChart wChart;
@@ -111,7 +122,7 @@ public class WorkflowExecutionHistoryDelegate {
 
   /**
    * Creates the execution history tab with its toolbar and chart. The history is loaded by {@link
-   * #refresh()}.
+   * #refresh()}, started automatically the first time the tab is shown.
    *
    * @param tabFolder the workflow graph tab folder
    * @return the created tab
@@ -138,7 +149,16 @@ public class WorkflowExecutionHistoryDelegate {
     composite.setLayout(new FormLayout());
 
     // Release the locations when the workflow graph is closed
-    composite.addListener(SWT.Dispose, e -> closeLocations());
+    composite.addListener(SWT.Dispose, e -> closeLocations(locationMap));
+
+    // Load the history the first time the tab is shown, whether selected by the user or not
+    composite.addListener(
+        SWT.Show,
+        e -> {
+          if (!refreshed) {
+            refresh();
+          }
+        });
 
     // Create toolbar
     IToolbarContainer toolBarContainer =
@@ -161,6 +181,10 @@ public class WorkflowExecutionHistoryDelegate {
   /**
    * Refreshes the workflow execution history by loading the most recent execution runs from all
    * configured execution information locations.
+   *
+   * <p>The runs are loaded in a background thread, so that Hop GUI stays responsive, and then
+   * displayed in the UI thread. The toolbar is disabled meanwhile, and a refresh requested while
+   * one is running is ignored.
    */
   @GuiToolbarElement(
       root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
@@ -171,46 +195,60 @@ public class WorkflowExecutionHistoryDelegate {
   @GuiOsxKeyboardShortcut(key = SWT.F5)
   public void refresh() {
     String workflowName = workflowGraph.getName();
-    if (workflowName == null) {
+    if (workflowName == null || refreshing) {
       return;
     }
+    refreshed = true;
+    refreshing = true;
+    enableToolbar(false, false);
 
-    Shell shell = hopGui.getShell();
+    // A dedicated thread, unlike a shared pool, inherits the context class loader of the UI thread
+    int limit = runLimit;
+    Display display = wChart.getDisplay();
+    Thread thread =
+        new Thread(
+            () -> {
+              Map<String, IExecutionInfoLocation> locations = new HashMap<>();
+              ExecutionHistory history = loadHistory(workflowName, limit, locations);
+              showHistoryLater(display, history, locations, limit);
+            },
+            "Workflow execution history refresh");
+    thread.setDaemon(true);
+    thread.start();
+  }
 
+  /**
+   * Loads the history from all the locations. Runs in the background thread, so it must not touch
+   * the widgets nor the fields shared with the UI thread.
+   *
+   * @param workflowName the name of the workflow
+   * @param limit the maximum number of runs to load
+   * @param locations receives the initialized locations, to close once no longer used
+   * @return the history, or {@code null} if it can't be loaded
+   */
+  private @Nullable ExecutionHistory loadHistory(
+      String workflowName, int limit, Map<String, IExecutionInfoLocation> locations) {
     try {
-      shell.setCursor(shell.getDisplay().getSystemCursor(SWT.CURSOR_WAIT));
-
-      // If there are any cached locations we want to close them before initializing new ones
-      closeLocations();
-
       IHopMetadataProvider metadataProvider = hopGui.getMetadataProvider();
       IHopMetadataSerializer<ExecutionInfoLocation> serializer =
           metadataProvider.getSerializer(ExecutionInfoLocation.class);
-      List<ExecutionInfoLocation> locations = serializer.loadAll();
 
       ExecutionHistory history = new ExecutionHistory(ExecutionType.Workflow, workflowName);
       IExecutionSelector selector =
           new DefaultExecutionSelector(
               false, false, false, false, true, false, workflowName, LastPeriod.NONE);
-      for (ExecutionInfoLocation locationMeta : locations) {
-        loadLocation(history, locationMeta, selector);
+      for (ExecutionInfoLocation locationMeta : serializer.loadAll()) {
+        loadLocation(history, locationMeta, selector, limit, locations);
       }
 
       // Sort by registration date desc and keep the most recent runs of all locations
-      history.sortAndTruncate(runLimit);
+      history.sortAndTruncate(limit);
 
       loadActionState(history);
-
-      wChart.setExecutionHistory(history);
-
-      // Fewer runs than the limit means the whole history is loaded
-      boolean hasMoreHistory = history.getRuns().size() >= runLimit;
-      toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_GET_MORE, hasMoreHistory);
-      toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_GET_ALL, hasMoreHistory);
+      return history;
     } catch (Exception e) {
       LogChannel.UI.logError("Error refreshing workflow execution history", e);
-    } finally {
-      shell.setCursor(null);
+      return null;
     }
   }
 
@@ -219,22 +257,86 @@ public class WorkflowExecutionHistoryDelegate {
    * locations are still loaded.
    */
   private void loadLocation(
-      ExecutionHistory history, ExecutionInfoLocation locationMeta, IExecutionSelector selector) {
+      ExecutionHistory history,
+      ExecutionInfoLocation locationMeta,
+      IExecutionSelector selector,
+      int limit,
+      Map<String, IExecutionInfoLocation> locations) {
     try {
       IExecutionInfoLocation location = locationMeta.getExecutionInfoLocation();
       location.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
 
-      // Keep the location around to close at the next refresh.
-      locationMap.put(locationMeta.getName(), location);
+      // Keep the location around, the displayed runs use it to open or delete their execution
+      locations.put(locationMeta.getName(), location);
 
       // Logging interval used to determine whether an execution is stale
       long loggingInterval = 2 * Const.toLong(locationMeta.getDataLoggingInterval(), 20000);
 
-      history.loadRuns(locationMeta.getName(), location, selector, loggingInterval, runLimit);
+      history.loadRuns(locationMeta.getName(), location, selector, loggingInterval, limit);
     } catch (Exception e) {
       LogChannel.UI.logError(
           "Unable to retrieve execution information from location " + locationMeta.getName(), e);
     }
+  }
+
+  /**
+   * Hands the loaded history over to the UI thread, or closes its locations if Hop GUI is already
+   * closed. Called from the background thread.
+   */
+  private void showHistoryLater(
+      Display display,
+      @Nullable ExecutionHistory history,
+      Map<String, IExecutionInfoLocation> locations,
+      int limit) {
+    try {
+      display.asyncExec(() -> showHistory(history, locations, limit));
+    } catch (SWTException e) {
+      // The display is disposed, nobody will use these locations
+      closeLocations(locations);
+    }
+  }
+
+  /**
+   * Displays the loaded history and keeps its locations, closing the previous ones. Runs in the UI
+   * thread.
+   *
+   * @param history the loaded history, or {@code null} if the refresh failed
+   * @param locations the locations used by the loaded runs
+   * @param limit the maximum number of runs that was requested
+   */
+  private void showHistory(
+      @Nullable ExecutionHistory history,
+      Map<String, IExecutionInfoLocation> locations,
+      int limit) {
+    refreshing = false;
+
+    // The workflow graph was closed during the refresh
+    if (wChart.isDisposed()) {
+      closeLocations(locations);
+      return;
+    }
+
+    // The refresh failed: keep the displayed history and allow to retry
+    if (history == null) {
+      closeLocations(locations);
+      enableToolbar(true, true);
+      return;
+    }
+
+    // The displayed runs now use the new locations, the previous ones are no longer used
+    closeLocations(locationMap);
+    locationMap.putAll(locations);
+    wChart.setExecutionHistory(history);
+
+    // Fewer runs than the limit means the whole history is loaded
+    enableToolbar(true, history.getRuns().size() >= limit);
+  }
+
+  /** Enables the toolbar buttons: refresh, and get more or all history. */
+  private void enableToolbar(boolean canRefresh, boolean hasMoreHistory) {
+    toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_REFRESH, canRefresh);
+    toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_GET_MORE, hasMoreHistory);
+    toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_GET_ALL, hasMoreHistory);
   }
 
   /** Loads {@link ExecutionHistory#RUN_PAGE_SIZE} more runs than currently displayed. */
@@ -244,6 +346,9 @@ public class WorkflowExecutionHistoryDelegate {
       toolTip = "i18n::ExecutionHistory.Toolbar.GetMoreHistory.Tooltip",
       image = "history-get-more.svg")
   public void getMoreHistory() {
+    if (refreshing) {
+      return;
+    }
     runLimit = (int) Math.min(Integer.MAX_VALUE, (long) runLimit + ExecutionHistory.RUN_PAGE_SIZE);
     refresh();
   }
@@ -255,16 +360,21 @@ public class WorkflowExecutionHistoryDelegate {
       toolTip = "i18n::ExecutionHistory.Toolbar.GetAllHistory.Tooltip",
       image = "history-get-all.svg")
   public void getAllHistory() {
+    if (refreshing) {
+      return;
+    }
     runLimit = Integer.MAX_VALUE;
     refresh();
   }
 
   /**
-   * Closes the locations opened by the last refresh. A failure is logged so that it doesn't prevent
-   * closing the other locations.
+   * Closes locations and empties the map. A failure is logged so that it doesn't prevent closing
+   * the other locations.
+   *
+   * @param locations the locations to close, keyed by name
    */
-  private void closeLocations() {
-    for (Map.Entry<String, IExecutionInfoLocation> entry : locationMap.entrySet()) {
+  private static void closeLocations(Map<String, IExecutionInfoLocation> locations) {
+    for (Map.Entry<String, IExecutionInfoLocation> entry : locations.entrySet()) {
       try {
         entry.getValue().close();
       } catch (Exception e) {
@@ -272,7 +382,7 @@ public class WorkflowExecutionHistoryDelegate {
             "Unable to close execution information location " + entry.getKey(), e);
       }
     }
-    locationMap.clear();
+    locations.clear();
   }
 
   /**
