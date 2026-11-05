@@ -18,7 +18,6 @@
 package org.apache.hop.ui.execution.history;
 
 import java.util.Comparator;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,6 +63,11 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Shell;
 
+/**
+ * Adds an "Executions" tab to the workflow graph, showing an {@link ExecutionHistoryChart} of the
+ * most recent executions of the workflow found in all execution information locations, with the
+ * status of each action.
+ */
 @GuiPlugin(
     name = "Workflow execution history",
     description = "Show the history of recent workflow executions")
@@ -74,13 +78,31 @@ public class WorkflowExecutionHistoryDelegate {
   public static final String GUI_PLUGIN_TOOLBAR_PARENT_ID = "WorkflowExecutionHistory-Toolbar";
   public static final String TOOLBAR_ITEM_REFRESH =
       "WorkflowExecutionHistory-Toolbar-10100-Refresh";
+  public static final String TOOLBAR_ITEM_GET_MORE =
+      "WorkflowExecutionHistory-Toolbar-10200-GetMore";
+  public static final String TOOLBAR_ITEM_GET_ALL = "WorkflowExecutionHistory-Toolbar-10300-GetAll";
 
   private final HopGui hopGui;
   private final HopGuiWorkflowGraph workflowGraph;
+
+  /** Locations initialized by the last refresh, keyed by name; closed at the next refresh. */
   private final Map<String, IExecutionInfoLocation> locationMap;
+
+  /**
+   * Maximum number of runs to load, raised by {@link #getMoreHistory()} and {@link
+   * #getAllHistory()}, and kept by {@link #refresh()}.
+   */
+  private int runLimit = ExecutionHistory.RUN_LIMIT;
+
   private GuiToolbarWidgets toolBarWidgets;
   private ExecutionHistoryChart wChart;
 
+  /**
+   * Creates the delegate; instantiated by the GUI plugin framework for each workflow graph.
+   *
+   * @param hopGui the Hop GUI
+   * @param workflowGraph the workflow graph owning the tab
+   */
   public WorkflowExecutionHistoryDelegate(HopGui hopGui, HopGuiWorkflowGraph workflowGraph) {
     super();
     this.hopGui = hopGui;
@@ -88,6 +110,13 @@ public class WorkflowExecutionHistoryDelegate {
     this.locationMap = new HashMap<>();
   }
 
+  /**
+   * Creates the execution history tab with its toolbar and chart. The history is loaded by {@link
+   * #refresh()}.
+   *
+   * @param tabFolder the workflow graph tab folder
+   * @return the created tab
+   */
   @GuiTab(
       id = "90000-workflow-execution-history-tab",
       parentId = HopGuiWorkflowGraph.WORKFLOW_GRAPH_TABS,
@@ -109,6 +138,9 @@ public class WorkflowExecutionHistoryDelegate {
     Composite composite = new Composite(tabFolder, SWT.NONE);
     tab.setControl(composite);
     composite.setLayout(new FormLayout());
+
+    // Release the locations when the workflow graph is closed
+    composite.addListener(SWT.Dispose, e -> closeLocations());
 
     // Create toolbar
     IToolbarContainer toolBarContainer =
@@ -151,10 +183,7 @@ public class WorkflowExecutionHistoryDelegate {
       shell.setCursor(shell.getDisplay().getSystemCursor(SWT.CURSOR_WAIT));
 
       // If there are any cached locations we want to close them before initializing new ones
-      for (IExecutionInfoLocation location : locationMap.values()) {
-        location.close();
-      }
-      locationMap.clear();
+      closeLocations();
 
       IHopMetadataProvider metadataProvider = hopGui.getMetadataProvider();
       IHopMetadataSerializer<ExecutionInfoLocation> serializer =
@@ -176,23 +205,36 @@ public class WorkflowExecutionHistoryDelegate {
           IExecutionSelector selector =
               new DefaultExecutionSelector(
                   false, false, false, false, true, false, workflowName, LastPeriod.NONE);
+          int loadedCount = 0;
           for (String id : location.findExecutionIDs(selector)) {
 
-            // Limit to last executions
-            if (history.getRuns().size() >= ExecutionHistory.RUN_LIMIT) {
+            // Limit to last executions of this location, the global limit is applied once merged
+            if (loadedCount >= runLimit) {
               break;
             }
 
-            Execution execution = location.getExecution(id);
-            if (execution != null && workflowName.equals(execution.getName())) {
+            // An unreadable execution must not hide the other executions of the location
+            try {
+              Execution execution = location.getExecution(id);
+              if (execution == null || !workflowName.equals(execution.getName())) {
+                continue;
+              }
 
               // Don't load execution logging since that can be a lot of data
               ExecutionState state = location.getExecutionState(execution.getId(), false);
+              if (state == null) {
+                continue;
+              }
               ExecutionStatus status = ExecutionStatus.from(state, loggingInterval);
               ExecutionRun run =
                   new ExecutionRun(execution, status, state, locationMeta.getName(), location);
 
               history.getRuns().add(run);
+              loadedCount++;
+            } catch (Exception ex) {
+              LogChannel.UI.logError(
+                  "Unable to load execution " + id + " from location " + locationMeta.getName(),
+                  ex);
             }
           }
         } catch (Exception ex) {
@@ -202,17 +244,17 @@ public class WorkflowExecutionHistoryDelegate {
         }
       }
 
-      // Sort by registration date desc and truncate.
-      List<ExecutionRun> runs = history.getRuns();
-      runs.sort(
-          Comparator.comparing(
-                  (ExecutionRun run) ->
-                      run.getRegistrationDate() == null ? new Date(0) : run.getRegistrationDate())
-              .reversed());
+      // Sort by registration date desc and keep the most recent runs of all locations
+      history.sortAndTruncate(runLimit);
 
       loadActionState(history);
 
       wChart.setExecutionHistory(history);
+
+      // Fewer runs than the limit means the whole history is loaded
+      boolean hasMoreHistory = history.getRuns().size() >= runLimit;
+      toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_GET_MORE, hasMoreHistory);
+      toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_GET_ALL, hasMoreHistory);
     } catch (Exception e) {
       LogChannel.UI.logError("Error refreshing workflow execution history", e);
     } finally {
@@ -220,6 +262,54 @@ public class WorkflowExecutionHistoryDelegate {
     }
   }
 
+  /** Loads {@link ExecutionHistory#RUN_LIMIT} more runs than currently displayed. */
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_GET_MORE,
+      toolTip = "i18n::ExecutionHistory.Toolbar.GetMoreHistory.Tooltip",
+      image = "history-get-more.svg")
+  public void getMoreHistory() {
+    runLimit = (int) Math.min(Integer.MAX_VALUE, (long) runLimit + ExecutionHistory.RUN_LIMIT);
+    refresh();
+  }
+
+  /** Loads all the runs available in the locations. */
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_GET_ALL,
+      toolTip = "i18n::ExecutionHistory.Toolbar.GetAllHistory.Tooltip",
+      image = "history-get-all.svg")
+  public void getAllHistory() {
+    runLimit = Integer.MAX_VALUE;
+    refresh();
+  }
+
+  /**
+   * Closes the locations opened by the last refresh. A failure is logged so that it doesn't prevent
+   * closing the other locations.
+   */
+  private void closeLocations() {
+    for (Map.Entry<String, IExecutionInfoLocation> entry : locationMap.entrySet()) {
+      try {
+        entry.getValue().close();
+      } catch (Exception e) {
+        LogChannel.UI.logError(
+            "Unable to close execution information location " + entry.getKey(), e);
+      }
+    }
+    locationMap.clear();
+  }
+
+  /**
+   * Loads the status of every action of each run into {@code ExecutionRun.getComponentStatus()},
+   * then sorts the component names alphabetically.
+   *
+   * <p>Actions have no execution state of their own, so the status is derived from the action
+   * execution data: finished or not, then the {@code errors} and {@code stopped} result values.
+   *
+   * @param history the history whose runs are completed
+   * @throws HopException if a child execution can't be read from its location
+   */
   public void loadActionState(ExecutionHistory history) throws HopException {
     try {
       for (ExecutionRun run : history.getRuns()) {
@@ -227,12 +317,13 @@ public class WorkflowExecutionHistoryDelegate {
         // List all action execution states
         List<String> childIds = run.getLocation().findChildIds(ExecutionType.Workflow, run.getId());
         for (String childId : childIds) {
+          // Actions don't have an execution state of their own (getExecutionState returns null),
+          // so create the status based on the execution data
           ExecutionData executionData = run.getLocation().getExecutionData(run.getId(), childId);
+          if (executionData == null) {
+            continue;
+          }
 
-          // Action doesn't have state, return null (BUG ?)
-          ExecutionState childState = run.getLocation().getExecutionState(childId, false);
-
-          // Create execution state based on execution data
           ExecutionDataSetMeta dataSetMeta = executionData.getDataSetMeta();
           if (dataSetMeta != null) {
             String actionName = dataSetMeta.getName();
@@ -254,13 +345,14 @@ public class WorkflowExecutionHistoryDelegate {
               if (rowMeta != null) {
                 for (Object[] row : rowBuffer.getBuffer()) {
                   try {
-                    if (rowMeta.getString(row, 0).equals(ExecutionDataBuilder.RESULT_KEY_ERRORS)) {
+                    String key = rowMeta.getString(row, 0);
+                    if (ExecutionDataBuilder.RESULT_KEY_ERRORS.equals(key)) {
                       long errors = Long.parseLong(rowMeta.getString(row, 1));
                       if (errors > 0) {
                         status = ExecutionStatus.FAILED;
                       }
                     }
-                    if (rowMeta.getString(row, 0).equals(ExecutionDataBuilder.RESULT_KEY_STOPPED)) {
+                    if (ExecutionDataBuilder.RESULT_KEY_STOPPED.equals(key)) {
                       if ("true".equalsIgnoreCase(rowMeta.getString(row, 1))) {
                         status = ExecutionStatus.STOPPED;
                       }
@@ -275,9 +367,9 @@ public class WorkflowExecutionHistoryDelegate {
             run.getComponentStatus().put(actionName, status);
           }
         }
-
-        history.getComponentNames().sort(Comparator.naturalOrder());
       }
+
+      history.getComponentNames().sort(Comparator.naturalOrder());
     } catch (Exception e) {
       throw new HopException("Error getting child executions", e);
     }

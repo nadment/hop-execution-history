@@ -33,22 +33,36 @@ public enum ExecutionStatus implements IEnumHasCodeAndDescription {
   PAUSED("ExecutionStatus.Paused"),
   UNKNOWN("ExecutionStatus.Unknown");
 
+  /** Localized description. */
   private final String description;
 
   ExecutionStatus(String description) {
     this.description = BaseMessages.getString(ExecutionStatus.class, description);
   }
 
+  /** {@inheritDoc} */
   @Override
   public String getCode() {
     return this.name();
   }
 
+  /** {@inheritDoc} */
   @Override
   public String getDescription() {
     return description;
   }
 
+  /**
+   * Derives the status from an execution state.
+   *
+   * <p>A running execution whose state has not been updated within {@code loggingInterval} is
+   * considered {@link #STALE}, i.e. the engine has probably died without reporting its end.
+   *
+   * @param state the execution state read from the location
+   * @param loggingInterval maximum delay in milliseconds between two state updates of a living
+   *     execution
+   * @return the matching status, {@link #UNKNOWN} if none applies
+   */
   public static ExecutionStatus from(ExecutionState state, long loggingInterval) {
     if (state.isFailed()) {
       if ("Stopped".equals(state.getStatusDescription())) {

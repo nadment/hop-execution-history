@@ -31,6 +31,7 @@ import org.apache.hop.i18n.BaseMessages;
 import org.apache.hop.ui.core.ConstUi;
 import org.apache.hop.ui.core.PropsUi;
 import org.apache.hop.ui.core.dialog.ErrorDialog;
+import org.apache.hop.ui.core.dialog.MessageBox;
 import org.apache.hop.ui.core.gui.GuiResource;
 import org.apache.hop.ui.hopgui.perspective.execution.ExecutionPerspective;
 import org.eclipse.swt.SWT;
@@ -47,6 +48,19 @@ import org.eclipse.swt.widgets.ScrollBar;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
+/**
+ * Canvas drawing an {@link ExecutionHistory} as a chart.
+ *
+ * <ul>
+ *   <li>The top area is a bar chart: one column per run, the bar height being the run duration and
+ *       its color the run status.
+ *   <li>Below, one row per component (transform or action) shows the status icon of that component
+ *       for each run.
+ * </ul>
+ *
+ * <p>Hovering a cell shows a tooltip, double-clicking a column opens the execution in the execution
+ * perspective and the context menu allows to open or delete it.
+ */
 @NullMarked
 public class ExecutionHistoryChart extends Canvas {
 
@@ -104,6 +118,7 @@ public class ExecutionHistoryChart extends Canvas {
   /** Color of a run's bar/icon while its execution is still running. */
   private final Color runningColor;
 
+  /** Icon of a paused component. */
   private final Image waitingImage;
 
   /** History currently displayed, or {@code null} until {@link #setExecutionHistory} is called. */
@@ -117,6 +132,12 @@ public class ExecutionHistoryChart extends Canvas {
 
   /** Vertical scroll offset of the chart content, in pixels; 0 means scrolled to the top. */
   private int scrollOffset = 0;
+
+  /**
+   * Horizontal scroll offset of the run columns, in pixels; 0 means the most recent run is shown
+   * next to the component names. The names and the duration axis don't scroll horizontally.
+   */
+  private int horizontalOffset = 0;
 
   // The following layout fields are recomputed on every paint() and cached so that mouseMove()
   // and mouseHover() can hit-test the last painted layout without redoing that work.
@@ -133,8 +154,15 @@ public class ExecutionHistoryChart extends Canvas {
   /** Zoom-adjusted width of one run column, in pixels (see {@link #CELL_WIDTH}). */
   private int cellWidth = CELL_WIDTH;
 
+  /**
+   * Creates an empty chart; call {@link #setExecutionHistory} to display data.
+   *
+   * @param parent the parent composite
+   * @param style SWT style bits, combined with {@code NO_BACKGROUND | DOUBLE_BUFFERED | V_SCROLL |
+   *     H_SCROLL}
+   */
   public ExecutionHistoryChart(Composite parent, int style) {
-    super(parent, style | SWT.NO_BACKGROUND | SWT.DOUBLE_BUFFERED | SWT.V_SCROLL);
+    super(parent, style | SWT.NO_BACKGROUND | SWT.DOUBLE_BUFFERED | SWT.V_SCROLL | SWT.H_SCROLL);
 
     finishedColor = new Color(92, 192, 196);
     runningColor = new Color(218, 170, 10);
@@ -148,7 +176,7 @@ public class ExecutionHistoryChart extends Canvas {
     addListener(SWT.MouseHover, this::mouseHover);
     addListener(SWT.MouseExit, this::mouseExit);
     addListener(SWT.MouseDoubleClick, this::mouseDoubleClick);
-    addListener(SWT.Resize, e -> updateVerticalScrollBar());
+    addListener(SWT.Resize, e -> updateScrollBars());
     addListener(SWT.MenuDetect, this::menuDetect);
 
     ScrollBar verticalBar = getVerticalBar();
@@ -160,17 +188,34 @@ public class ExecutionHistoryChart extends Canvas {
             redraw();
           });
     }
+
+    ScrollBar horizontalBar = getHorizontalBar();
+    if (horizontalBar != null) {
+      horizontalBar.addListener(
+          SWT.Selection,
+          e -> {
+            horizontalOffset = horizontalBar.getSelection();
+            redraw();
+          });
+    }
   }
 
+  /**
+   * Displays a new history, resetting the selection and the scroll position.
+   *
+   * @param executionHistory the history to display
+   */
   public void setExecutionHistory(ExecutionHistory executionHistory) {
     this.executionHistory = executionHistory;
     this.selectedExecution = -1;
     this.selectedComponent = -1;
     this.scrollOffset = 0;
-    updateVerticalScrollBar();
+    this.horizontalOffset = 0;
+    updateScrollBars();
     redraw();
   }
 
+  /** Paints the whole chart and caches the layout fields used for hit-testing. */
   private void paint(Event e) {
     GuiResource resource = GuiResource.getInstance();
 
@@ -207,7 +252,7 @@ public class ExecutionHistoryChart extends Canvas {
       }
     }
 
-    updateVerticalScrollBar();
+    updateScrollBars();
 
     int stepSeconds = computeStepSeconds(maxDuration);
     int maxSeconds = stepSeconds * 4;
@@ -314,12 +359,21 @@ public class ExecutionHistoryChart extends Canvas {
       return;
     }
 
+    // Columns scrolled to the left must not overwrite the component names
+    gc.setClipping(nameWidth, 0, Math.max(0, area.width - nameWidth), area.height);
+
     List<String> componentNames = history.getComponentNames();
     List<ExecutionRun> runs = history.getRuns();
     for (int c = 0; c < runs.size(); c++) {
       ExecutionRun run = runs.get(c);
 
-      int x = nameWidth + c * cellWidth;
+      int x = nameWidth + c * cellWidth - horizontalOffset;
+
+      // Skip the columns outside the visible area
+      if (x + cellWidth <= nameWidth || x >= area.width) {
+        continue;
+      }
+
       int barHeight = 0;
       if (maxSeconds > 0) {
         barHeight = (int) (barAreaHeight * run.getDuration() / maxSeconds);
@@ -363,41 +417,74 @@ public class ExecutionHistoryChart extends Canvas {
         line++;
       }
     }
+
+    gc.setClipping((Rectangle) null);
   }
 
-  private void updateVerticalScrollBar() {
-    ScrollBar verticalBar = getVerticalBar();
-    if (verticalBar == null) {
-      return;
+  /**
+   * Adjusts the scroll bars to the content size, and clamps {@link #scrollOffset} and {@link
+   * #horizontalOffset} to their new range.
+   */
+  private void updateScrollBars() {
+    Rectangle area = getClientArea();
+
+    // Vertically, the bar chart and all the component rows
+    int contentHeight = CHART_HEIGHT + lineCount * lineHeight;
+    scrollOffset =
+        updateScrollBar(getVerticalBar(), contentHeight, area.height, scrollOffset, lineHeight);
+
+    // Horizontally, only the run columns scroll, next to the fixed component names
+    int runCount = executionHistory == null ? 0 : executionHistory.getRuns().size();
+    horizontalOffset =
+        updateScrollBar(
+            getHorizontalBar(),
+            runCount * cellWidth,
+            Math.max(0, area.width - nameWidth),
+            horizontalOffset,
+            cellWidth);
+  }
+
+  /**
+   * Adjusts a scroll bar to the content size, hiding it when everything fits.
+   *
+   * @param bar the scroll bar, may be null if the style doesn't have one
+   * @param contentSize the size of the scrollable content, in pixels
+   * @param visibleSize the size of the visible part of the content, in pixels
+   * @param offset the current scroll offset, in pixels
+   * @param increment the scroll step when clicking the bar arrows, in pixels
+   * @return the offset clamped to the new range, 0 when everything fits
+   */
+  private static int updateScrollBar(
+      @Nullable ScrollBar bar, int contentSize, int visibleSize, int offset, int increment) {
+    if (bar == null) {
+      return offset;
     }
 
-    Rectangle area = getClientArea();
-    int contentHeight = CHART_HEIGHT + lineCount * lineHeight;
-    int visibleHeight = area.height;
-    int maximumScrollOffset = Math.max(0, contentHeight - visibleHeight);
+    int maximumScrollOffset = Math.max(0, contentSize - visibleSize);
 
     if (maximumScrollOffset <= 0) {
-      scrollOffset = 0;
-      verticalBar.setEnabled(false);
-      verticalBar.setMinimum(0);
-      verticalBar.setMaximum(1);
-      verticalBar.setThumb(1);
-      verticalBar.setSelection(0);
-      verticalBar.setVisible(false);
-      return;
+      bar.setEnabled(false);
+      bar.setMinimum(0);
+      bar.setMaximum(1);
+      bar.setThumb(1);
+      bar.setSelection(0);
+      bar.setVisible(false);
+      return 0;
     }
 
-    scrollOffset = Math.min(scrollOffset, maximumScrollOffset);
-    verticalBar.setEnabled(true);
-    verticalBar.setVisible(true);
-    verticalBar.setMinimum(0);
-    verticalBar.setMaximum(contentHeight);
-    verticalBar.setThumb(visibleHeight);
-    verticalBar.setPageIncrement(visibleHeight);
-    verticalBar.setIncrement(lineHeight);
-    verticalBar.setSelection(scrollOffset);
+    int clampedOffset = Math.min(offset, maximumScrollOffset);
+    bar.setEnabled(true);
+    bar.setVisible(true);
+    bar.setMinimum(0);
+    bar.setMaximum(contentSize);
+    bar.setThumb(visibleSize);
+    bar.setPageIncrement(visibleSize);
+    bar.setIncrement(increment);
+    bar.setSelection(clampedOffset);
+    return clampedOffset;
   }
 
+  /** Shows the context menu (open / delete) when a run column is selected. */
   private void menuDetect(Event event) {
     ExecutionRun run = getSelectedExecutionRun();
     if (run != null) {
@@ -418,6 +505,10 @@ public class ExecutionHistoryChart extends Canvas {
     }
   }
 
+  /**
+   * Updates the selected run column and component row from the mouse position, using the layout
+   * cached by the last {@link #paint}, and redraws only when the selection changed.
+   */
   private void mouseMove(Event event) {
     int previousSelectedExecution = selectedExecution;
     int previousSelectedAction = selectedComponent;
@@ -427,7 +518,11 @@ public class ExecutionHistoryChart extends Canvas {
 
       if (y >= TOP_MARGIN_HEIGHT) {
 
-        int column = Math.floorDiv(event.x - nameWidth, cellWidth);
+        // Columns are scrolled horizontally, except over the component names
+        int column =
+            event.x < nameWidth
+                ? -1
+                : Math.floorDiv(event.x - nameWidth + horizontalOffset, cellWidth);
         if (column >= 0 && column < executionHistory.getRuns().size()) {
           selectedExecution = column;
         } else {
@@ -460,6 +555,7 @@ public class ExecutionHistoryChart extends Canvas {
     }
   }
 
+  /** Shows the run details over a bar, or the component status over a status icon. */
   private void mouseHover(Event event) {
 
     // Reset tooltip
@@ -506,6 +602,11 @@ public class ExecutionHistoryChart extends Canvas {
     openExecution(getSelectedExecutionRun());
   }
 
+  /**
+   * Returns the run under the mouse.
+   *
+   * @return the selected run, or {@code null} if no column is selected
+   */
   public @Nullable ExecutionRun getSelectedExecutionRun() {
     if (executionHistory != null && selectedExecution >= 0) {
       return executionHistory.getRun(selectedExecution);
@@ -513,6 +614,7 @@ public class ExecutionHistoryChart extends Canvas {
     return null;
   }
 
+  /** Opens the run in the execution perspective; does nothing if {@code run} is null. */
   private void openExecution(@Nullable ExecutionRun run) {
     if (run == null) {
       return;
@@ -531,25 +633,58 @@ public class ExecutionHistoryChart extends Canvas {
       Execution execution = run.getLocation().getExecution(run.getId());
       perspective.createExecutionViewer(locationName, execution, run.getExecutionState());
     } catch (Exception e) {
-      new ErrorDialog(getShell(), "Error", "Error opening execution", e);
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "System.Dialog.Error.Title"),
+          BaseMessages.getString(PKG, "ExecutionHistoryChart.Error.OpenExecution"),
+          e);
     }
   }
 
+  /**
+   * After confirmation, deletes the run from its location and removes it from the chart; does
+   * nothing if {@code run} is null.
+   */
   private void deleteExecution(@Nullable ExecutionRun run) {
-    if (run == null) {
+    ExecutionHistory history = this.executionHistory;
+    if (run == null || history == null) {
+      return;
+    }
+
+    // The deletion can't be undone, ask for confirmation
+    MessageBox box = new MessageBox(getShell(), SWT.YES | SWT.NO | SWT.ICON_QUESTION);
+    box.setText(BaseMessages.getString(PKG, "ExecutionHistoryChart.DeleteExecution.Title"));
+    box.setMessage(
+        BaseMessages.getString(PKG, "ExecutionHistoryChart.DeleteExecution.Message", run.getId()));
+    if (box.open() != SWT.YES) {
       return;
     }
 
     try {
       IExecutionInfoLocation location = run.getLocation();
       location.deleteExecution(run.getId());
-      executionHistory.getRuns().remove(run);
+      history.getRuns().remove(run);
+
+      // The selected column may no longer exist
+      selectedExecution = -1;
+      selectedComponent = -1;
+      setCursor(null);
       redraw();
     } catch (Exception e) {
-      new ErrorDialog(getShell(), "Error", "Error delete execution", e);
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "System.Dialog.Error.Title"),
+          BaseMessages.getString(PKG, "ExecutionHistoryChart.Error.DeleteExecution"),
+          e);
     }
   }
 
+  /**
+   * Returns the bar color of a run status.
+   *
+   * @param status the run status, may be null
+   * @return the color, light gray for a stale, unknown or null status
+   */
   protected Color getExecutionStatusColor(@Nullable ExecutionStatus status) {
     GuiResource resource = GuiResource.getInstance();
     return switch (status) {
@@ -563,6 +698,12 @@ public class ExecutionHistoryChart extends Canvas {
     };
   }
 
+  /**
+   * Returns the icon of a component status.
+   *
+   * @param status the component status, null when the component did not run
+   * @return the icon, or {@code null} to draw nothing
+   */
   protected @Nullable Image getExecutionStatusImage(@Nullable ExecutionStatus status) {
     GuiResource resource = GuiResource.getInstance();
     return switch (status) {
@@ -577,6 +718,12 @@ public class ExecutionHistoryChart extends Canvas {
     };
   }
 
+  /**
+   * Picks the largest unit not greater than the given duration, used to format it.
+   *
+   * @param second a duration in seconds
+   * @return {@code DAYS}, {@code HOURS}, {@code MINUTES} or {@code SECONDS}
+   */
   protected static ChronoUnit getChronoUnit(long second) {
     if (second >= 86400) {
       return ChronoUnit.DAYS;
@@ -588,6 +735,12 @@ public class ExecutionHistoryChart extends Canvas {
     return ChronoUnit.SECONDS;
   }
 
+  /**
+   * Formats a date with the locale medium date-time style, in the system time zone.
+   *
+   * @param date the date to format, may be null
+   * @return the formatted date, or {@code "?"} if the date is null
+   */
   protected static String formatDate(@Nullable Date date) {
     if (date == null) {
       return "?";

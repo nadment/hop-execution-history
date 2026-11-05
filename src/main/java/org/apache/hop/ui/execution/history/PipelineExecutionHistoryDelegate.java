@@ -18,7 +18,6 @@
 package org.apache.hop.ui.execution.history;
 
 import java.util.Comparator;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +58,11 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Shell;
 
+/**
+ * Adds an "Executions" tab to the pipeline graph, showing an {@link ExecutionHistoryChart} of the
+ * most recent executions of the pipeline found in all execution information locations, with the
+ * status of each transform copy.
+ */
 @GuiPlugin(
     name = "Pipeline execution history",
     description = "Show the history of recent pipeline executions")
@@ -69,13 +73,31 @@ public class PipelineExecutionHistoryDelegate {
   public static final String GUI_PLUGIN_TOOLBAR_PARENT_ID = "PipelineExecutionHistory-Toolbar";
   public static final String TOOLBAR_ITEM_REFRESH =
       "PipelineExecutionHistory-Toolbar-10100-Refresh";
+  public static final String TOOLBAR_ITEM_GET_MORE =
+      "PipelineExecutionHistory-Toolbar-10200-GetMore";
+  public static final String TOOLBAR_ITEM_GET_ALL = "PipelineExecutionHistory-Toolbar-10300-GetAll";
 
   private final HopGui hopGui;
   private final HopGuiPipelineGraph pipelineGraph;
+
+  /** Locations initialized by the last refresh, keyed by name; closed at the next refresh. */
   private final Map<String, IExecutionInfoLocation> locationMap;
+
+  /**
+   * Maximum number of runs to load, raised by {@link #getMoreHistory()} and {@link
+   * #getAllHistory()}, and kept by {@link #refresh()}.
+   */
+  private int runLimit = ExecutionHistory.RUN_LIMIT;
+
   private GuiToolbarWidgets toolBarWidgets;
   private ExecutionHistoryChart wChart;
 
+  /**
+   * Creates the delegate; instantiated by the GUI plugin framework for each pipeline graph.
+   *
+   * @param hopGui the Hop GUI
+   * @param pipelineGraph the pipeline graph owning the tab
+   */
   public PipelineExecutionHistoryDelegate(HopGui hopGui, HopGuiPipelineGraph pipelineGraph) {
     super();
     this.hopGui = hopGui;
@@ -83,6 +105,13 @@ public class PipelineExecutionHistoryDelegate {
     this.locationMap = new HashMap<>();
   }
 
+  /**
+   * Creates the execution history tab with its toolbar and chart. The history is loaded by {@link
+   * #refresh()}.
+   *
+   * @param tabFolder the pipeline graph tab folder
+   * @return the created tab
+   */
   @GuiTab(
       id = "90000-pipeline-execution-history-tab",
       parentId = HopGuiPipelineGraph.PIPELINE_GRAPH_TABS,
@@ -104,6 +133,9 @@ public class PipelineExecutionHistoryDelegate {
     Composite composite = new Composite(tabFolder, SWT.NONE);
     tab.setControl(composite);
     composite.setLayout(new FormLayout());
+
+    // Release the locations when the pipeline graph is closed
+    composite.addListener(SWT.Dispose, e -> closeLocations());
 
     // Create toolbar
     IToolbarContainer toolBarContainer =
@@ -146,10 +178,7 @@ public class PipelineExecutionHistoryDelegate {
       shell.setCursor(shell.getDisplay().getSystemCursor(SWT.CURSOR_WAIT));
 
       // If there are any cached locations we want to close them before initializing new ones
-      for (IExecutionInfoLocation location : locationMap.values()) {
-        location.close();
-      }
-      locationMap.clear();
+      closeLocations();
 
       IHopMetadataProvider metadataProvider = hopGui.getMetadataProvider();
       IHopMetadataSerializer<ExecutionInfoLocation> serializer =
@@ -170,22 +199,36 @@ public class PipelineExecutionHistoryDelegate {
           IExecutionSelector selector =
               new DefaultExecutionSelector(
                   false, false, false, false, false, true, pipelineName, LastPeriod.NONE);
+          int loadedCount = 0;
           for (String id : location.findExecutionIDs(selector)) {
 
-            // Limit to last executions
-            if (history.getRuns().size() >= ExecutionHistory.RUN_LIMIT) {
+            // Limit to last executions of this location, the global limit is applied once merged
+            if (loadedCount >= runLimit) {
               break;
             }
 
-            Execution execution = location.getExecution(id);
-            if (execution != null && pipelineName.equals(execution.getName())) {
+            // An unreadable execution must not hide the other executions of the location
+            try {
+              Execution execution = location.getExecution(id);
+              if (execution == null || !pipelineName.equals(execution.getName())) {
+                continue;
+              }
+
               // Don't load execution logging since that can be a lot of data
               ExecutionState state = location.getExecutionState(id, false);
+              if (state == null) {
+                continue;
+              }
               ExecutionStatus status = ExecutionStatus.from(state, loggingInterval);
               ExecutionRun run =
                   new ExecutionRun(execution, status, state, locationMeta.getName(), location);
 
               history.getRuns().add(run);
+              loadedCount++;
+            } catch (Exception ex) {
+              LogChannel.UI.logError(
+                  "Unable to load execution " + id + " from location " + locationMeta.getName(),
+                  ex);
             }
           }
         } catch (Exception ex) {
@@ -195,17 +238,17 @@ public class PipelineExecutionHistoryDelegate {
         }
       }
 
-      // Sort by registration date desc
-      List<ExecutionRun> runs = history.getRuns();
-      runs.sort(
-          Comparator.comparing(
-                  (ExecutionRun run) ->
-                      run.getRegistrationDate() == null ? new Date(0) : run.getRegistrationDate())
-              .reversed());
+      // Sort by registration date desc and keep the most recent runs of all locations
+      history.sortAndTruncate(runLimit);
 
       loadTransformState(history);
 
       wChart.setExecutionHistory(history);
+
+      // Fewer runs than the limit means the whole history is loaded
+      boolean hasMoreHistory = history.getRuns().size() >= runLimit;
+      toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_GET_MORE, hasMoreHistory);
+      toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_GET_ALL, hasMoreHistory);
     } catch (Exception e) {
       LogChannel.UI.logError("Error refreshing pipeline execution history", e);
     } finally {
@@ -213,6 +256,52 @@ public class PipelineExecutionHistoryDelegate {
     }
   }
 
+  /** Loads {@link ExecutionHistory#RUN_LIMIT} more runs than currently displayed. */
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_GET_MORE,
+      toolTip = "i18n::ExecutionHistory.Toolbar.GetMoreHistory.Tooltip",
+      image = "history-get-more.svg")
+  public void getMoreHistory() {
+    runLimit = (int) Math.min(Integer.MAX_VALUE, (long) runLimit + ExecutionHistory.RUN_LIMIT);
+    refresh();
+  }
+
+  /** Loads all the runs available in the locations. */
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_GET_ALL,
+      toolTip = "i18n::ExecutionHistory.Toolbar.GetAllHistory.Tooltip",
+      image = "history-get-all.svg")
+  public void getAllHistory() {
+    runLimit = Integer.MAX_VALUE;
+    refresh();
+  }
+
+  /**
+   * Closes the locations opened by the last refresh. A failure is logged so that it doesn't prevent
+   * closing the other locations.
+   */
+  private void closeLocations() {
+    for (Map.Entry<String, IExecutionInfoLocation> entry : locationMap.entrySet()) {
+      try {
+        entry.getValue().close();
+      } catch (Exception e) {
+        LogChannel.UI.logError(
+            "Unable to close execution information location " + entry.getKey(), e);
+      }
+    }
+    locationMap.clear();
+  }
+
+  /**
+   * Loads the state of every transform copy of each run into {@code
+   * ExecutionRun.getComponentStatus()}, registering the copy as {@code "name (copyNr)"}, then sorts
+   * the component names alphabetically.
+   *
+   * @param history the history whose runs are completed
+   * @throws HopException if a child execution can't be read from its location
+   */
   public void loadTransformState(ExecutionHistory history) throws HopException {
     for (ExecutionRun run : history.getRuns()) {
       // List all transform execution states
